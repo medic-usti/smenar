@@ -84,7 +84,9 @@ function refreshFromLocalAndRender(){
   ACTIONS = load(DB_ACTIONS);
   ACTIVITY= load(DB_ACTIVITY);
   ARCHIVE = load(DB_ARCHIVE);
-  renderApp?.(); renderHeader?.();
+  // nepřihlašuj automaticky
+  renderHeader?.();
+  if (ME) renderApp?.(); else viewLogin?.();
 }
 async function startRealtime(){
   if(!sb) return;
@@ -138,7 +140,7 @@ function roleLabel(k){ return (ROLES||[]).find(r=>r.key===k)?.label || k; }
 function userPublicRoles(u){ const pubs=getPublicRoleKeys(); return (u?.roles||[]).filter(r=>pubs.includes(r)); }
 function ensureActiveRole(){ if(!ME){ACTIVE_ROLE=null;return;} const prs=userPublicRoles(ME); if(!prs.length){ACTIVE_ROLE=null;return;} if(!ACTIVE_ROLE||!prs.includes(ACTIVE_ROLE)) ACTIVE_ROLE=prs[0]; }
 function userHasRole(u,r){ return (u?.roles||[]).includes(r); }
-function isSupportUser(u){ return !!u && (u.roles||[]).includes("support") || ((u?.name||"").trim().toLowerCase()==="podpora"); }
+function isSupportUser(u){ return !!u && ((u.roles||[]).includes("support") || ((u?.name||"").trim().toLowerCase()==="podpora")); }
 
 function renderHeader(){
   const el=$("#hdr"); if(!ME){ el.innerHTML=""; return; }
@@ -197,10 +199,10 @@ function sortEvents(a,b){ const A=(a.date||"")+" "+(a.timeFrom||"00:00"); const 
 function viewEvents(){
   const app=$("#app");
   const pubs=getPublicRoleKeys();
-  const cards = ACTIONS.slice().sort(sortEvents).map(a=>{
+  const cards = (ACTIONS||[]).slice().sort(sortEvents).map(a=>{
     const capHtml = pubs.map(r=>{
-      const list=a.signups[r]||[]; const names=list.map(id=> (USERS.find(u=>u.id===id)||{}).name ).filter(Boolean).join(", ");
-      return `<li><b>${roleLabel(r)}</b>: ${list.length}/${a.capacity[r]||0} — ${names||"—"}</li>`;
+      const list=a.signups?.[r]||[]; const names=list.map(id=> (USERS.find(u=>u.id===id)||{}).name ).filter(Boolean).join(", ");
+      return `<li><b>${roleLabel(r)}</b>: ${list.length}/${(a.capacity?.[r]||0)} — ${names||"—"}</li>`;
     }).join("");
     const isOpen=getUnlockOpen(a);
     let actionBtn="";
@@ -305,7 +307,7 @@ function viewMembers(){
       </div>
       <div class="row" style="justify-content:flex-end;margin-top:10px"><button class="btn primary" onclick="createUser()">Vytvořit</button></div>
     </div>`;
-  const list = USERS.map(u=>{
+  const list = (USERS||[]).map(u=>{
     const rid="pw_"+u.id;
     return `<div class="card">
       <div class="grid2">
@@ -340,8 +342,7 @@ function saveUser(uidx){
 function deleteUser(uidx){
   if(!confirm("Opravdu smazat člena?")) return;
   USERS=USERS.filter(x=>x.id!==uidx);
-  // odstranit z přihlášek
-  const pubs=getPublicRoleKeys(); ACTIONS.forEach(a=> pubs.forEach(r=>{ a.signups[r]=(a.signups[r]||[]).filter(id=>id!==uidx); }));
+  const pubs=getPublicRoleKeys(); (ACTIONS||[]).forEach(a=> pubs.forEach(r=>{ a.signups[r]=(a.signups[r]||[]).filter(id=>id!==uidx); }));
   save(DB_USERS,USERS); save(DB_ACTIONS,ACTIONS); viewMembers(); toast("Člen smazán");
 }
 
@@ -384,28 +385,31 @@ function saveRole(key){
 function deleteRole(key){
   if(!confirm("Smazat roli?")) return;
   ROLES = (ROLES||[]).filter(r=>r.key!==key); save(DB_ROLES,ROLES);
-  USERS.forEach(u=>{ u.roles=(u.roles||[]).filter(k=>k!==key); }); save(DB_USERS,USERS);
+  (USERS||[]).forEach(u=>{ u.roles=(u.roles||[]).filter(k=>k!==key); }); save(DB_USERS,USERS);
   (ACTIONS||[]).forEach(a=>{ if(a.capacity) delete a.capacity[key]; if(a.signups) delete a.signups[key]; }); save(DB_ACTIONS,ACTIONS);
   if(ACTIVE_ROLE===key){ ACTIVE_ROLE=null; }
   renderApp(); toast("Role smazána", key);
 }
 
-/* ========= Init ========= */
-function renderApp(){ renderHeader(); viewEvents(); }
+/* ========= Init / Render ========= */
+function renderApp(){
+  renderHeader();
+  if(!ME){ viewLogin(); return; }  // <-- důležité (nepřepínej bez přihlášení)
+  viewEvents();
+}
 
 (async function init(){
   // 1) Stáhni DB → localStorage (max 3s)
   try{ await Promise.race([bootSync(), new Promise((_,rej)=>setTimeout(()=>rej(new Error("bootSync timeout")),3000))]); }catch(_){}
   // 2) Realtime kanál
   startRealtime();
-  // 3) Fallback: polling každých 5 s (kdyby Realtime neběžel)
-  setInterval(()=> bootSync().then(refreshFromLocalAndRender).catch(()=>{}), 5000);
+  // 3) Fallback: polling každých 15 s (kdyby Realtime neběžel)
+  setInterval(()=> bootSync().then(refreshFromLocalAndRender).catch(()=>{}), 15000);
 
   // 4) Session a render
   const sid = localStorage.getItem(DB_SESSION);
   if(sid){ ME = (USERS||[]).find(u=>u.id===sid) || null; }
-  if(!ME){ renderHeader(); viewLogin(); }
-  else { ensureActiveRole(); renderApp(); }
+  renderApp();
 })();
 </script>
 </body>
