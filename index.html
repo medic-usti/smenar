@@ -139,10 +139,20 @@ async function kvUpsert(key, val){
   if(error){ console.warn("kvUpsert error", key, error); }
 }
 
-async function bootSync(){
-  if(!sb) return;
+\1
+
+// Never block UI waiting for DB — proceed after a short timeout
+async function safeBootSync(timeoutMs = 3000){
   try{
-    const { data, error } = await sb.from("kv").select("key,val").in("key", SYNC_KEYS);
+    await Promise.race([
+      bootSync(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("bootSync timeout")), timeoutMs))
+    ]);
+  }catch(e){
+    console.warn("safeBootSync:", e.message || e);
+  }
+}
+= await sb.from("kv").select("key,val").in("key", SYNC_KEYS);
     if(error){ console.warn("bootSync select error", error); return; }
     (data||[]).forEach(row=>{
       try{ localStorage.setItem(row.key, JSON.stringify(row.val ?? [])); }catch(e){}
@@ -1594,7 +1604,7 @@ function logout(){
 }
 
 // ====== Init ======
-(async function init(){ await bootSync(); USERS = load(DB_USERS); ACTIONS = load(DB_ACTIONS); const sid = getSession();
+(async function init(){ await safeBootSync(); USERS = load(DB_USERS); ACTIONS = load(DB_ACTIONS); const sid = getSession();
   if(sid){ ME = getUserById(sid); }
   archiveSweep();
   if(!ME){
