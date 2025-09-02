@@ -42,6 +42,57 @@
   </style>
 </head>
 <body>
+<div id="db-debug-bar" style="position:fixed;bottom:12px;right:12px;background:#111;color:#fff;padding:10px 12px;border-radius:10px;font:12px/1.2 system-ui,Segoe UI,Arial;box-shadow:0 6px 18px rgba(0,0,0,.25);z-index:99999">
+  <div style="display:flex;align-items:center;gap:8px;">
+    <span id="db-dot" style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#777"></span>
+    <span id="db-msg">Checking DB…</span>
+    <button id="db-test" style="margin-left:10px;padding:4px 8px;border:0;border-radius:6px;cursor:pointer">DB test</button>
+  </div>
+</div>
+<script>
+(async function(){
+  // Update dot
+  function setDot(ok, text){
+    const dot = document.getElementById('db-dot');
+    const msg = document.getElementById('db-msg');
+    if(!dot||!msg) return;
+    dot.style.background = ok ? '#2ecc71' : '#e74c3c';
+    msg.textContent = text || (ok ? 'DB connected' : 'DB error');
+  }
+
+  // quick reachability check
+  try{
+    if(!sb){ setDot(false, 'Supabase client missing'); }
+    else {
+      // light-weight ping using anon key: do a select on kv with limit 1 (will fail if RLS blocks select globally)
+      const { data, error } = await sb.from('kv').select('key').limit(1);
+      if(error){ console.error('Ping error', error); setDot(false, 'RLS/Select blocked'); }
+      else { setDot(true, 'DB reachable'); }
+    }
+  }catch(e){
+    console.error('Ping catch', e);
+    setDot(false, 'Network error');
+  }
+
+  // test button
+  const btn = document.getElementById('db-test');
+  if(btn){
+    btn.addEventListener('click', async ()=>{
+      try{
+        const k = 'smenar.debug.heartbeat';
+        const payload = { t: new Date().toISOString(), note: 'hello-from-debug' };
+        await kvUpsert(k, payload);
+        const res = await kvGet(k);
+        alert('DB test result:
+' + JSON.stringify(res, null, 2));
+      }catch(e){
+        alert('DB test failed: ' + e.message);
+      }
+    });
+  }
+})();
+</script>
+
   <header>
     <div class="row"><span style="font-size:20px">🗂️</span><b>Směnář</b></div>
     <div id="hdr"></div>
@@ -70,14 +121,21 @@ const SYNC_KEYS = [
 ];
 
 async function kvGet(key){
-  if(!sb) return null;
+  if(!sb){ console.warn("kvGet: no sb client"); return null; }
   const { data, error } = await sb.from("kv").select("val").eq("key", key).single();
+  if(error && error.code !== "PGRST116"){ console.error("kvGet error", {key, error}); }
+  else { console.debug("kvGet ok", {key, data}); }
+  return data?.val ?? null;
+} = await sb.from("kv").select("val").eq("key", key).single();
   if(error && error.code !== "PGRST116"){ console.warn("kvGet error", key, error); }
   return data?.val ?? null;
 }
 async function kvUpsert(key, val){
-  if(!sb) return;
+  if(!sb){ console.warn("kvUpsert: no sb client"); return; }
   const { error } = await sb.from("kv").upsert({ key, val });
+  if(error){ console.error("kvUpsert error", {key, error}); }
+  else { console.debug("kvUpsert ok", {key}); }
+} = await sb.from("kv").upsert({ key, val });
   if(error){ console.warn("kvUpsert error", key, error); }
 }
 
