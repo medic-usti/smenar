@@ -658,7 +658,7 @@ async function toggleUserRole(uid, roleKey, on){
   // non-support nesmí manipulovat s uživatelem, který je Podpora
   if(!isSupportUser(ME) && userHasRole(u,'support')) return;
 
-  u.roles=u.roles||([]);
+  u.roles=u.roles||[];
   const has=u.roles.includes(roleKey);
   if(on===false || (on===undefined && has)){ u.roles=u.roles.filter(r=>r!==roleKey); }
   else if(!has){ u.roles.push(roleKey); }
@@ -815,9 +815,10 @@ function viewRoles(){
   const app=$('#app');
 
   const list=ROLES.filter(canSeeRoleObj).map(r=>{
-    // Smazat:
-    // - Podpora může smazat vše (včetně "admin")
-    // - kdokoliv jiný NE (u "admin" nikdy nezobrazit)
+    // Práva na tlačítka:
+    // - „Upravit“: jen Podpora může u role "admin"
+    // - „Smazat“ : jen Podpora může u role "admin"
+    const canEdit   = isSupportUser(ME) ? true : (r.key !== 'admin');
     const canDelete = isSupportUser(ME) ? true : (r.key !== 'admin');
 
     return `
@@ -825,7 +826,7 @@ function viewRoles(){
         <b>${r.label}</b> <span class="muted">(${r.key})</span> • ${r.isPublic?'veřejná':'neveřejná'}
         ${isPrivileged()?`
         <div class="row" style="margin-top:6px">
-          <button class="btn" type="button" onclick="editRoleOpen('${r.key}')">Upravit</button>
+          ${canEdit   ? `<button class="btn" type="button" onclick="editRoleOpen('${r.key}')">Upravit</button>` : ``}
           ${canDelete ? `<button class="btn danger" type="button" onclick="deleteRole('${r.key}')">Smazat</button>` : ``}
         </div>`:''}
       </div>`;
@@ -846,6 +847,14 @@ function viewRoles(){
 }
 function editRoleOpen(key){
   if(!canSeeRoleKey(key)) { viewRoles(); return; }
+
+  // ❗ Admin nesmí upravovat roli "admin" – může pouze Podpora
+  if (key === 'admin' && !isSupportUser(ME)) {
+    alert('Roli „admin“ může upravovat pouze Podpora.');
+    viewRoles();
+    return;
+  }
+
   const r=ROLES.find(x=>x.key===key); if(!r) return;
   const app=$('#app');
   app.innerHTML=`
@@ -863,6 +872,14 @@ function editRoleOpen(key){
 async function saveRole(){
   const key=document.getElementById('er_key').value;
   if(!canSeeRoleKey(key)) { viewRoles(); return; }
+
+  // ❗ Admin nesmí ukládat změny role "admin"
+  if (key === 'admin' && !isSupportUser(ME)) {
+    alert('Roli „admin“ může upravovat pouze Podpora.');
+    viewRoles();
+    return;
+  }
+
   const label=document.getElementById('er_label').value.trim();
   const pub=document.getElementById('er_pub').checked;
   const r=ROLES.find(x=>x.key===key); if(!r) return;
