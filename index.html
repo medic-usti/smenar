@@ -38,15 +38,16 @@
     .toast small{color:#cbd5e1}
     @media (max-width:640px){.grid2,.grid3{grid-template-columns:1fr} header{flex-wrap:wrap;gap:8px}}
 
-    /* DB status badge */
     .db-ind{position:fixed;right:12px;bottom:12px;z-index:60;background:#111827;color:#fff;border-radius:10px;padding:8px 10px;font-size:12px;box-shadow:0 8px 24px rgba(0,0,0,.25);display:inline-flex;align-items:center;gap:8px;border:1px solid rgba(255,255,255,.08)}
     .db-dot{width:8px;height:8px;border-radius:999px;background:#ef4444;box-shadow:0 0 0 2px rgba(239,68,68,.25)}
     .db-dot.ok{background:#10b981;box-shadow:0 0 0 2px rgba(16,185,129,.25)}
     .db-muted{color:#cbd5e1}
 
-    /* Zvýraznění mých událostí */
     .event-mine{border-color:#10b981 !important;box-shadow:0 8px 30px rgba(16,185,129,.25)}
     .mine-pill{background:#ecfdf5;border-color:#10b981;color:#065f46;font-weight:600}
+
+    /* error banner */
+    #err {position:fixed;left:12px;right:12px;bottom:68px;z-index:70;background:#fee2e2;color:#7f1d1d;border:1px solid #fecaca;border-radius:10px;padding:8px 10px;font-size:12px;display:none}
   </style>
 </head>
 <body>
@@ -56,6 +57,7 @@
     <span class="db-muted">•</span>
     <span class="db-muted">naposledy: <span id="dbLast">—</span></span>
   </div>
+  <div id="err"></div>
 
   <header>
     <div class="row"><span style="font-size:20px">🗂️</span><b>Směnář</b></div>
@@ -66,7 +68,20 @@
   <div class="toast-wrap" id="toasts"></div>
 
   <script>
-/* ===== Local DB + helpers (localStorage beze změny klíčů) ===== */
+/* === Error reporting === */
+(function(){
+  function showErr(msg){
+    console.error(msg);
+    const el=document.getElementById('err');
+    if(!el) return;
+    el.textContent=String(msg);
+    el.style.display='block';
+  }
+  window.addEventListener('error', (e)=>{ showErr(e.message || 'Neznámá chyba'); });
+  window.addEventListener('unhandledrejection', (e)=>{ showErr(e.reason?.message || e.reason || 'Nezachycené odmítnutí Promise'); });
+})();
+
+/* ===== Local DB + helpers ===== */
 const DB_USERS="smenar.users", DB_ACTIONS="smenar.actions", DB_ROLES="smenar.roles", DB_SESSION="smenar.session", DB_ACTIVITY="smenar.activity", DB_ARCHIVE="smenar.actions.archive";
 function load(k){ try{ return JSON.parse(localStorage.getItem(k)||'[]'); }catch(_){ return []; } }
 function save(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(_){ } }
@@ -89,7 +104,7 @@ let USERS=load(DB_USERS), ACTIONS=load(DB_ACTIONS), ROLES=load(DB_ROLES), ACTIVI
 let ME=null, ACTIVE_ROLE=null;
 let CURRENT_VIEW='events', CURRENT_EDIT_ID=null;
 
-/* ===== Seed (jen při úplně prázdném localStorage) ===== */
+/* ===== Seed ===== */
 (function seed(){
   if(!ROLES.length){ ROLES=[{key:'ridic',label:'Řidič',isPublic:true},{key:'zza',label:'ZZA',isPublic:true},{key:'zdravotnik',label:'Zdravotník',isPublic:true}]; save(DB_ROLES,ROLES); }
   if(!USERS.length){ USERS=[{id:'u1',name:'Podpora',password:'support',roles:['support','admin'],isActive:true},{id:'u2',name:'admin',password:'1111',roles:['admin'],isActive:true},{id:'u3',name:'Adam',password:'adam',roles:['ridic','zza'],isActive:true},{id:'u4',name:'Bára',password:'bara',roles:['zdravotnik'],isActive:true}]; save(DB_USERS,USERS); }
@@ -112,12 +127,12 @@ function renderHeader(){
   const el=$('#hdr'); if(!ME){ el.innerHTML=''; return; }
   ensureActiveRole();
   const prs=userPublicRoles(ME);
-  const roleSel=(ACTIVE_ROLE && prs.length)?\`<select class="select" id="selActiveRole">\${prs.map(r=>\`<option value="\${r}" \${r===ACTIVE_ROLE?'selected':''}>\${roleLabel(r)}</option>\`).join('')}</select>\`:`<span class="muted">Bez veřejné role</span>`;
-  el.innerHTML=\`
+  const roleSel=(ACTIVE_ROLE && prs.length)?`<select class="select" id="selActiveRole">${prs.map(r=>`<option value="${r}" ${r===ACTIVE_ROLE?'selected':''}>${roleLabel(r)}</option>`).join('')}</select>`:`<span class="muted">Bez veřejné role</span>`;
+  el.innerHTML=`
     <div class="row">
-      <span class="badge">\${ME.name}</span>
-      \${roleSel}
-      \${userHasRole(ME,'admin')? \`
+      <span class="badge">${ME.name}</span>
+      ${roleSel}
+      ${userHasRole(ME,'admin')? `
         <div class="menu" id="adminMenu">
           <button class="btn" id="adminBtn" type="button">Admin ▾</button>
           <div class="dropdown">
@@ -127,18 +142,18 @@ function renderHeader(){
             <button type="button" onclick="viewRoles()">Role</button>
             <button type="button" onclick="viewActivity()">Aktivita</button>
             <button type="button" onclick="viewCreateEvent()">Nová událost</button>
-            \${isSupportUser(ME)?\`<button type="button" onclick="viewExport()">Export / Záloha</button>\`:''}
+            ${isSupportUser(ME)?`<button type="button" onclick="viewExport()">Export / Záloha</button>`:''}
           </div>
-        </div>\`:''}
+        </div>`:''}
       <button class="btn" type="button" onclick="logout()">Odhlásit</button>
-    </div>\`;
+    </div>`;
   const sel=document.getElementById('selActiveRole'); if(sel) sel.onchange=()=>{ ACTIVE_ROLE=sel.value; renderApp(); };
   const menu=document.getElementById('adminMenu'); if(menu){ const btn=document.getElementById('adminBtn'); btn.addEventListener('click',(e)=>{e.stopPropagation();menu.classList.toggle('open');}); document.addEventListener('click',(e)=>{ if(!menu.contains(e.target)) menu.classList.remove('open'); }); }
 }
 
 function viewLogin(){
   const app=$('#app');
-  app.innerHTML=\`
+  app.innerHTML=`
     <div class="card" style="max-width:420px;margin:40px auto">
       <h3>Přihlášení</h3>
       <input id="loginName" class="input" placeholder="Jméno">
@@ -147,7 +162,7 @@ function viewLogin(){
         <button class="btn" id="togglePass" type="button">👁️</button>
       </div>
       <button class="btn primary" id="btnLogin" type="button">Přihlásit</button>
-    </div>\`;
+    </div>`;
   document.getElementById('togglePass').onclick=()=>{ const i=document.getElementById('loginPass'); i.type=(i.type==='password'?'text':'password'); };
   document.getElementById('btnLogin').onclick=()=>{
     const n=document.getElementById('loginName').value.trim();
@@ -160,25 +175,12 @@ function viewLogin(){
 }
 
 /* ===== Events / Archive ===== */
-function safeHHMM(s){ return /^\\d{2}:\\d{2}$/.test(s||'')?s:''; }
-function eventEndMs(a){ const d=a?.date||today(); const end=safeHHMM(a?.timeTo)||safeHHMM(a?.timeFrom)||'23:59'; const t=new Date(\`\${d}T\${end}\`).getTime(); return isNaN(t)?new Date(\`\${d}T23:59\`).getTime():t; }
+function safeHHMM(s){ return /^\d{2}:\d{2}$/.test(s||'')?s:''; }
+function eventEndMs(a){ const d=a?.date||today(); const end=safeHHMM(a?.timeTo)||safeHHMM(a?.timeFrom)||'23:59'; const t=new Date(`${d}T${end}`).getTime(); return isNaN(t)?new Date(`${d}T23:59`).getTime():t; }
 function isPastEvent(a){ return nowMs()>eventEndMs(a); }
 function getUnlockMs(a){ if(!a||!a.signupUnlock) return 0; const ms=new Date(a.signupUnlock).getTime(); return isNaN(ms)?0:ms; }
 function sortEvents(a,b){ const A=(a.date||'')+' '+(a.timeFrom||'00:00'); const B=(b.date||'')+' '+(b.timeFrom||'00:00'); return A.localeCompare(B); }
 function archiveSweep(){ let acts=load(DB_ACTIONS); let arc=load(DB_ARCHIVE); const toMove=(acts||[]).filter(isPastEvent); if(!toMove.length) return; const keep=acts.filter(a=>!isPastEvent(a)); ACTIONS=keep; save(DB_ACTIONS,ACTIONS); const moved=toMove.slice().sort(sortEvents).reverse(); arc=[...moved,...arc]; ARCHIVE=arc; save(DB_ARCHIVE,arc); }
-
-function renderEventHistory(eventId,limit){
-  const list=(load(DB_ACTIVITY)||[]).filter(x=>x.eventId===eventId).slice(-limit);
-  if(!list.length) return '';
-  const items=list.map(x=>{
-    const who=x.userName || (getUserById(x.userId)?.name) || 'uživatel';
-    const role=x.roleKey? \` (\${roleLabel(x.roleKey)})\`:'';
-    const date=new Date(x.ts).toLocaleString();
-    const map={join:\`přihlášení\${role}\`,leave:\`odhlášení\${role}\`,assign:\`přiřazen\${role}\`,remove:\`odebrán\${role}\`,createEvent:'vytvoření události',updateEvent:'úprava události',deleteEvent:'smazání události'};
-    return \`<li>\${date}: <b>\${who}</b> – \${map[x.type]||x.type}</li>\`;
-  }).join('');
-  return \`<details class="admin-box"><summary><b>Historie události</b></summary><ul class="list-plain" style="margin-top:8px">\${items}</ul></details>\`;
-}
 
 function isMeSignedInEvent(a){
   if(!ME) return false;
@@ -189,7 +191,7 @@ function isMeSignedInEvent(a){
 
 function viewEvents(){
   CURRENT_VIEW='events';
-  archiveSweep();
+  try{ archiveSweep(); }catch(e){ console.warn('archiveSweep error', e); }
   const app=$('#app');
   ensureActiveRole();
   USERS=load(DB_USERS); ACTIONS=load(DB_ACTIONS); ROLES=load(DB_ROLES);
@@ -198,47 +200,44 @@ function viewEvents(){
     const capHtml=pubs.map(r=>{
       const list=a.signups?.[r]||[];
       const names=list.map(id=> (getUserById(id)||{}).name ).filter(Boolean).join(', ');
-      return \`<li><b>\${roleLabel(r)}</b>: \${list.length}/\${(a.capacity?.[r]||0)} — \${names||'—'}</li>\`;
+      return `<li><b>${roleLabel(r)}</b>: ${list.length}/${(a.capacity?.[r]||0)} — ${names||'—'}</li>`;
     }).join('');
     const unlockMs=getUnlockMs(a);
     const isOpen=(unlockMs===0||nowMs()>=unlockMs);
     let actionBtn='';
-    if(!ME) actionBtn=\`<span class="muted">Přihlašování až po přihlášení</span>\`;
-    else if(!isOpen){ const when=a.signupUnlock?new Date(a.signupUnlock).toLocaleString():''; actionBtn=\`<span class="muted">Přihlašování se otevře: <b>\${when}</b></span>\`; }
+    if(!ME) actionBtn=`<span class="muted">Přihlašování až po přihlášení</span>`;
+    else if(!isOpen){ const when=a.signupUnlock?new Date(a.signupUnlock).toLocaleString():''; actionBtn=`<span class="muted">Přihlašování se otevře: <b>${when}</b></span>`; }
     else if(ACTIVE_ROLE){
       const my=a.signups[ACTIVE_ROLE]||[]; const isIn=my.includes(ME.id);
-      actionBtn = isIn ? \`<button class="btn danger" type="button" onclick="leaveEvent('\${a.id}')">Odhlásit se</button>\`
-                       : (my.length>=(a.capacity[ACTIVE_ROLE]||0) ? \`<span class="muted">Kapacita pro roli \${roleLabel(ACTIVE_ROLE)} je plná</span>\`
-                         : \`<button class="btn primary" type="button" onclick="joinEvent('\${a.id}')">Přihlásit se</button>\`);
-    } else actionBtn=\`<span class="muted">Nemáte vybranou veřejnou roli</span>\`;
+      actionBtn = isIn ? `<button class="btn danger" type="button" onclick="leaveEvent('${a.id}')">Odhlásit se</button>`
+                       : (my.length>=(a.capacity[ACTIVE_ROLE]||0) ? `<span class="muted">Kapacita pro roli ${roleLabel(ACTIVE_ROLE)} je plná</span>`
+                         : `<button class="btn primary" type="button" onclick="joinEvent('${a.id}')">Přihlásit se</button>`);
+    } else actionBtn=`<span class="muted">Nemáte vybranou veřejnou roli</span>`;
 
     const mine=isMeSignedInEvent(a);
-    const minePill = mine ? \`<span class="pill mine-pill">✔ Přihlášen</span>\` : '';
+    const minePill = mine ? `<span class="pill mine-pill">✔ Přihlášen</span>` : '';
 
-    const adminControls = userHasRole(ME,'admin')? \`
+    const adminControls = userHasRole(ME,'admin')? `
       <div class="row">
-        <button class="btn" type="button" onclick="editEvent('\${a.id}')">Upravit</button>
-        <button class="btn danger" type="button" onclick="deleteEvent('\${a.id}')">Smazat</button>
-      </div>\` : '';
+        <button class="btn" type="button" onclick="editEvent('${a.id}')">Upravit</button>
+        <button class="btn danger" type="button" onclick="deleteEvent('${a.id}')">Smazat</button>
+      </div>` : '';
 
-    const history = renderEventHistory(a.id,5);
-
-    return \`
-      <div class="card \${mine?'event-mine':''}">
+    return `
+      <div class="card ${mine?'event-mine':''}">
         <div class="row" style="justify-content:space-between;align-items:flex-start">
           <div>
-            <div style="font-weight:700">\${a.title} \${minePill}</div>
-            <div class="muted">\${a.date} • \${a.location||'—'} • \${(a.timeFrom||'')}\${a.timeTo?('–'+a.timeTo):''}</div>
-            \${a.signupUnlock? \`<div class="muted" style="font-size:12px">Odemknutí přihlašování: <b>\${new Date(a.signupUnlock).toLocaleString()}</b></div>\` : ''}
+            <div style="font-weight:700">${a.title} ${minePill}</div>
+            <div class="muted">${a.date} • ${a.location||'—'} • ${(a.timeFrom||'')}${a.timeTo?('–'+a.timeTo):''}</div>
+            ${a.signupUnlock? `<div class="muted" style="font-size:12px">Odemknutí přihlašování: <b>${new Date(a.signupUnlock).toLocaleString()}</b></div>` : ''}
           </div>
-          \${adminControls}
+          ${adminControls}
         </div>
-        <ul class="list-plain" style="margin-top:8px">\${capHtml}</ul>
-        <div class="row" style="margin-top:8px">\${actionBtn}</div>
-        \${history}
-      </div>\`;
+        <ul class="list-plain" style="margin-top:8px">${capHtml}</ul>
+        <div class="row" style="margin-top:8px">${actionBtn}</div>
+      </div>`;
   }).join('');
-  app.innerHTML=\`<h3>Události</h3>\${cards || '<div class="card muted">Žádné události.</div>'}\`;
+  app.innerHTML=`<h3>Události</h3>${cards || '<div class="card muted">Žádné události.</div>'}`;
 }
 
 /* ===== Join/Leave, Delete ===== */
@@ -265,31 +264,31 @@ function viewCreateEvent(editId=null){
   const pubs=getPublicRoleKeys();
   const caps = pubs.map(k=>{
     const v = a?.capacity?.[k] ?? (k==='zza'?2:1);
-    return \`<div><label>\${roleLabel(k)} kapacita<input class="input" id="cap_\${k}" type="number" min="0" value="\${v}"></label></div>\`;
+    return `<div><label>${roleLabel(k)} kapacita<input class="input" id="cap_${k}" type="number" min="0" value="${v}"></label></div>`;
   }).join('');
 
-  app.innerHTML=\`
-    <h3>\${editId?'Upravit událost':'Nová událost'}</h3>
+  app.innerHTML=`
+    <h3>${editId?'Upravit událost':'Nová událost'}</h3>
     <div class="card">
       <div class="grid3">
-        <label>Kdy (datum)<input id="ev_date" class="input" type="date" value="\${date}"></label>
-        <label>Od<input id="ev_from" class="input" placeholder="HH:MM" value="\${tFrom}"></label>
-        <label>Do<input id="ev_to" class="input" placeholder="HH:MM" value="\${tTo}"></label>
+        <label>Kdy (datum)<input id="ev_date" class="input" type="date" value="${date}"></label>
+        <label>Od<input id="ev_from" class="input" placeholder="HH:MM" value="${tFrom}"></label>
+        <label>Do<input id="ev_to" class="input" placeholder="HH:MM" value="${tTo}"></label>
       </div>
       <div class="grid2" style="margin-top:8px">
-        <label>Název<input id="ev_title" class="input" value="\${title}"></label>
-        <label>Místo<input id="ev_loc" class="input" value="\${location}"></label>
+        <label>Název<input id="ev_title" class="input" value="${title}"></label>
+        <label>Místo<input id="ev_loc" class="input" value="${location}"></label>
       </div>
       <div class="grid2" style="margin-top:8px">
-        <label>Přihlašování spuštěno od<input id="ev_unlock" class="input" type="datetime-local" value="\${unlock? new Date(unlock).toISOString().slice(0,16):''}"></label>
+        <label>Přihlašování spuštěno od<input id="ev_unlock" class="input" type="datetime-local" value="${unlock? new Date(unlock).toISOString().slice(0,16):''}"></label>
         <div></div>
       </div>
-      <div class="grid3" style="margin-top:8px">\${caps}</div>
+      <div class="grid3" style="margin-top:8px">${caps}</div>
       <div class="row" style="justify-content:flex-end;margin-top:12px">
         <button class="btn" type="button" onclick="renderApp()">Zpět</button>
-        <button class="btn primary" type="button" onclick="saveEvent('\${editId||''}')">\${editId?'Uložit změny':'Vytvořit'}</button>
+        <button class="btn primary" type="button" onclick="saveEvent('${editId||''}')">${editId?'Uložit změny':'Vytvořit'}</button>
       </div>
-    </div>\`;
+    </div>`;
 }
 
 function saveEvent(editId){
@@ -320,27 +319,32 @@ function saveEvent(editId){
   renderApp();
 }
 
-/* ===== Past, Members, Roles, Activity, Export ===== */
-function viewPastEvents(){ CURRENT_VIEW='past'; archiveSweep(); const app=$('#app'); const pubs=getPublicRoleKeys(); const cards=(load(DB_ARCHIVE)||[]).map(a=>{ const capHtml=pubs.map(r=>{ const list=a.signups?.[r]||[]; const names=list.map(id=> (getUserById(id)||{}).name ).filter(Boolean).join(', '); return \`<li><b>\${roleLabel(r)}</b>: \${list.length}/\${(a.capacity?.[r]||0)} — \${names||'—'}</li>\`; }).join(''); return \`<div class="card"><div style="font-weight:700">\${a.title}</div><div class="muted">\${a.date} • \${a.location||'—'} • \${(a.timeFrom||'')}\${a.timeTo?('–'+a.timeTo):''}</div><ul class="list-plain" style="margin-top:8px">\${capHtml}</ul></div>\`; }).join(''); app.innerHTML=\`<h3>Proběhlé akce</h3>\${cards||'<div class="card muted">Žádné záznamy.</div>'}\`; }
-function viewMembers(){ CURRENT_VIEW='members'; USERS=load(DB_USERS); const app=$('#app'); const rows=USERS.map(u=>\`<div class="card"><div class="row" style="justify-content:space-between"><div><div><b>\${u.name}</b> <span class="muted">(\${u.isActive?'aktivní':'deaktivován'})</span></div><div class="muted">Role: \${(u.roles||[]).map(roleLabel).join(', ')||'—'}</div></div></div></div>\`).join(''); app.innerHTML=\`<h3>Členové</h3>\${rows}\`; }
-function viewRoles(){ CURRENT_VIEW='roles'; ROLES=load(DB_ROLES); const app=$('#app'); const list=ROLES.map(r=>\`<div class="card"><div class="row" style="justify-content:space-between"><div><b>\${r.label}</b> <span class="muted">(\${r.key})</span> • \${r.isPublic?'veřejná':'neveřejná'}</div></div></div>\`).join(''); app.innerHTML=\`<h3>Role</h3>\${list}\`; }
-function viewActivity(){ CURRENT_VIEW='activity'; const app=$('#app'); const list=(load(DB_ACTIVITY)||[]).slice(-200).reverse().map(a=>{ const ts=new Date(a.ts).toLocaleString(); return \`<li>\${ts}: <b>\${a.userName||a.userId||'uživatel'}</b> — \${a.type} (\${a.eventTitle||a.eventId||''})</li>\`; }).join(''); app.innerHTML=\`<h3>Aktivita</h3><div class="card"><ul class="list-plain">\${list||'<li class="muted">Žádná aktivita.</li>'}</ul></div>\`; }
-function viewExport(){ CURRENT_VIEW='export'; const app=$('#app'); app.innerHTML=\`<h3>Export / Záloha</h3><div class="card"><div class="row"><button class="btn" type="button" onclick="downloadJson()">Stáhnout JSON</button></div></div>\`; }
+/* ===== Other views ===== */
+function viewPastEvents(){ CURRENT_VIEW='past'; try{ archiveSweep(); }catch(e){ console.warn(e); } const app=$('#app'); const pubs=getPublicRoleKeys(); const cards=(load(DB_ARCHIVE)||[]).map(a=>{ const capHtml=pubs.map(r=>{ const list=a.signups?.[r]||[]; const names=list.map(id=> (getUserById(id)||{}).name ).filter(Boolean).join(', '); return `<li><b>${roleLabel(r)}</b>: ${list.length}/${(a.capacity?.[r]||0)} — ${names||'—'}</li>`; }).join(''); return `<div class="card"><div style="font-weight:700">${a.title}</div><div class="muted">${a.date} • ${a.location||'—'} • ${(a.timeFrom||'')}${a.timeTo?('–'+a.timeTo):''}</div><ul class="list-plain" style="margin-top:8px">${capHtml}</ul></div>`; }).join(''); app.innerHTML=`<h3>Proběhlé akce</h3>${cards||'<div class="card muted">Žádné záznamy.</div>'}`; }
+function viewMembers(){ CURRENT_VIEW='members'; USERS=load(DB_USERS); const app=$('#app'); const rows=USERS.map(u=>`<div class="card"><div class="row" style="justify-content:space-between"><div><div><b>${u.name}</b> <span class="muted">(${u.isActive?'aktivní':'deaktivován'})</span></div><div class="muted">Role: ${(u.roles||[]).map(roleLabel).join(', ')||'—'}</div></div></div></div>`).join(''); app.innerHTML=`<h3>Členové</h3>${rows}`; }
+function viewRoles(){ CURRENT_VIEW='roles'; ROLES=load(DB_ROLES); const app=$('#app'); const list=ROLES.map(r=>`<div class="card"><div class="row" style="justify-content:space-between"><div><b>${r.label}</b> <span class="muted">(${r.key})</span> • ${r.isPublic?'veřejná':'neveřejná'}</div></div></div>`).join(''); app.innerHTML=`<h3>Role</h3>${list}`; }
+function viewActivity(){ CURRENT_VIEW='activity'; const app=$('#app'); const list=(load(DB_ACTIVITY)||[]).slice(-200).reverse().map(a=>{ const ts=new Date(a.ts).toLocaleString(); return `<li>${ts}: <b>${a.userName||a.userId||'uživatel'}</b> — ${a.type} (${a.eventTitle||a.eventId||''})</li>`; }).join(''); app.innerHTML=`<h3>Aktivita</h3><div class="card"><ul class="list-plain">${list||'<li class="muted">Žádná aktivita.</li>'}</ul></div>`; }
+function viewExport(){ CURRENT_VIEW='export'; const app=$('#app'); app.innerHTML=`<h3>Export / Záloha</h3><div class="card"><div class="row"><button class="btn" type="button" onclick="downloadJson()">Stáhnout JSON</button></div></div>`; }
 function downloadJson(){ const data={users:load(DB_USERS),roles:load(DB_ROLES),actions:load(DB_ACTIONS),archive:load(DB_ARCHIVE),activity:load(DB_ACTIVITY)}; const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='smenar_backup.json'; a.click(); }
 
 /* ===== Router ===== */
 function renderApp(){
-  renderHeader();
-  if(!ME){
-    const sid=localStorage.getItem(DB_SESSION);
-    if(sid){ USERS=load(DB_USERS); const u=getUserById(sid); if(u && u.isActive!==false){ ME=u; ensureActiveRole(); } else localStorage.removeItem(DB_SESSION); }
+  try{
+    renderHeader();
+    if(!ME){
+      const sid=localStorage.getItem(DB_SESSION);
+      if(sid){ USERS=load(DB_USERS); const u=getUserById(sid); if(u && u.isActive!==false){ ME=u; ensureActiveRole(); } else localStorage.removeItem(DB_SESSION); }
+    }
+    if(!ME){ viewLogin(); return; }
+    switch(CURRENT_VIEW){ case 'create': viewCreateEvent(CURRENT_EDIT_ID); break; case 'members': viewMembers(); break; case 'roles': viewRoles(); break; case 'activity': viewActivity(); break; case 'past': viewPastEvents(); break; case 'export': viewExport(); break; default: viewEvents(); }
+  }catch(e){
+    const el=document.getElementById('err'); if(el){ el.textContent='Render error: '+(e.message||e); el.style.display='block'; }
+    console.error('Render error', e);
   }
-  if(!ME){ viewLogin(); return; }
-  switch(CURRENT_VIEW){ case 'create': viewCreateEvent(CURRENT_EDIT_ID); break; case 'members': viewMembers(); break; case 'roles': viewRoles(); break; case 'activity': viewActivity(); break; case 'past': viewPastEvents(); break; case 'export': viewExport(); break; default: viewEvents(); }
 }
 renderApp();
 
-/* ===== Global handlers (důležité kvůli onclick) ===== */
+/* ===== Global handlers ===== */
 window.viewCreateEvent=viewCreateEvent;
 window.saveEvent=saveEvent;
 window.editEvent=function(aid){ viewCreateEvent(aid); };
