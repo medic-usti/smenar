@@ -31,8 +31,6 @@
     .pill{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:999px;padding:6px 10px;background:#fff}
     .list-plain{margin:0;padding-left:1rem}
     .list-plain li{margin:2px 0}
-    details summary{cursor:pointer; user-select:none; list-style:none}
-    details summary::-webkit-details-marker{display:none}
     .admin-box{border:1px dashed var(--border); border-radius:10px; padding:10px; margin-top:10px; background:#fafbff}
     .key{font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; font-size:12px; padding:2px 6px; border:1px solid var(--border); border-radius:6px; background:#fff}
     .toast-wrap{position:fixed;right:16px;bottom:16px;display:flex;flex-direction:column;gap:8px;z-index:50}
@@ -160,7 +158,7 @@ function updateEventBoth(aid, updater, log){
   if(p){ updater(p); save(DB_ARCHIVE,ARCHIVE); changed=true; }
   if(changed){
     DB_LAST_TS=Date.now(); DB_LAST_SRC='save';
-    if(log) log();
+    if(typeof log==='function') log();
     renderApp();
   }
 }
@@ -288,7 +286,6 @@ function viewEvents(){
   USERS=load(DB_USERS); ACTIONS=load(DB_ACTIONS); ROLES=load(DB_ROLES);
   const pubs=getPublicRoleKeys();
   const cards=(ACTIONS||[]).slice().sort(sortEvents).map(a=>{
-    // seznamy + odebrání
     const capHtml=pubs.map(r=>{
       const list=a.signups?.[r]||[];
       const names=list.map(id=>{
@@ -299,7 +296,6 @@ function viewEvents(){
       return `<li><b>${roleLabel(r)}</b>: ${list.length}/${(a.capacity?.[r]||0)} — ${names||'—'}</li>`;
     }).join('');
 
-    // přihlašování
     const unlockMs=getUnlockMs(a);
     const isOpen=(unlockMs===0||nowMs()>=unlockMs);
     let actionBtn='';
@@ -315,7 +311,7 @@ function viewEvents(){
     const mine=isMeSignedInEvent(a);
     const minePill = mine ? `<span class="pill mine-pill">✔ Přihlášen</span>` : '';
 
-    // admin assign UI
+    /* ADMIN assign UI */
     const adminAssign = isPrivileged()? `
       <div class="admin-box small" style="margin-top:8px">
         <b>Ruční přiřazení:</b>
@@ -323,7 +319,7 @@ function viewEvents(){
           ${pubs.map(r=>{
             const opts=candidatesForRole(r,a).map(u=>`<option value="${u.id}">${u.name}</option>`).join('');
             const disabled = opts? '' : 'disabled';
-            const selId = \`sel_${a.id}_${r}\`;
+            const selId = `sel_${a.id}_${r}`;
             return `<div>
                 <label>${roleLabel(r)}</label>
                 <div class="row" style="margin-top:4px">
@@ -335,7 +331,7 @@ function viewEvents(){
         </div>
       </div>` : '';
 
-    // admin: zaplaceno + poznámka
+    /* ADMIN finance/poznámka */
     const adminFinance = isPrivileged()? `
       <div class="admin-box small" style="margin-top:8px">
         <div class="row">
@@ -354,7 +350,6 @@ function viewEvents(){
         </div>
       </div>` : '';
 
-    // historie
     const hist = historyForEvent(a.id, 20).map(h=>{
       const at=new Date(h.ts).toLocaleString();
       const who = h.userName || h.userId || 'uživatel';
