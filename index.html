@@ -33,7 +33,7 @@
     details summary{cursor:pointer; user-select:none; list-style:none}
     details summary::-webkit-details-marker{display:none}
     .admin-box{border:1px dashed var(--border); border-radius:10px; padding:10px; margin-top:10px; background:#fafbff}
-    .key{font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size:12px; padding:2px 6px; border:1px solid var(--border); border-radius:6px; background:#fff}
+    .key{font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; font-size:12px; padding:2px 6px; border:1px solid var(--border); border-radius:6px; background:#fff}
     .toast-wrap{position:fixed;right:16px;bottom:16px;display:flex;flex-direction:column;gap:8px;z-index:50}
     .toast{background:#111827;color:#fff;border-radius:8px;padding:10px 12px;box-shadow:0 8px 24px rgba(0,0,0,.25);max-width:360px}
     .toast small{color:#cbd5e1}
@@ -45,6 +45,7 @@
     .event-mine{border-color:#10b981 !important;box-shadow:0 8px 30px rgba(16,185,129,.25)}
     .mine-pill{background:#ecfdf5;border-color:#10b981;color:#065f46;font-weight:600}
     #err {position:fixed;left:12px;right:12px;bottom:68px;z-index:70;background:#fee2e2;color:#7f1d1d;border:1px solid #fecaca;border-radius:10px;padding:8px 10px;font-size:12px;display:none}
+    .chip{display:inline-flex;align-items:center;border:1px solid var(--border);border-radius:999px;padding:2px 8px;margin:2px 4px;background:#fff}
   </style>
 </head>
 <body>
@@ -65,7 +66,7 @@
   <div class="toast-wrap" id="toasts"></div>
 
   <script>
-/* === Error reporting + hidden char detector === */
+/* === Error reporting === */
 (function(){
   function showErr(msg){
     const el=document.getElementById('err');
@@ -76,13 +77,6 @@
   }
   window.addEventListener('error', (e)=>{ showErr(e.message || 'Neznámá chyba'); });
   window.addEventListener('unhandledrejection', (e)=>{ showErr(e.reason?.message || e.reason || 'Nezachycené odmítnutí Promise'); });
-
-  // Highlight hidden BOM/ZWSP if present in inline scripts
-  const bad=/[\u200B\u200C\u200D\uFEFF]/g;
-  document.querySelectorAll('script').forEach((s, i)=>{
-    const m=s.textContent.match(bad);
-    if(m){ console.warn('Hidden chars in <script> #'+i, m.length); showErr('Nalezeny skryté znaky v <script> #' + i); }
-  });
 })();
 
 /* ===== Local DB + helpers ===== */
@@ -125,6 +119,7 @@ function roleLabel(k){ return (ROLES||[]).find(r=>r.key===k)?.label||k; }
 function userPublicRoles(u){ const pubs=getPublicRoleKeys(); return (u?.roles||[]).filter(r=>pubs.includes(r)); }
 function ensureActiveRole(){ if(!ME){ACTIVE_ROLE=null;return;} const prs=userPublicRoles(ME); if(!prs.length){ACTIVE_ROLE=null;return;} if(!ACTIVE_ROLE||!prs.includes(ACTIVE_ROLE)) ACTIVE_ROLE=prs[0]; }
 function isSupportUser(u){ return !!u && ((u.roles||[]).includes('support') || ((u?.name||'').trim().toLowerCase()==='podpora')); }
+function isPrivileged(){ return ME && (userHasRole(ME,'admin') || userHasRole(ME,'support')); }
 
 /* ===== Header + Login ===== */
 function renderHeader(){
@@ -136,7 +131,7 @@ function renderHeader(){
     <div class="row">
       <span class="badge">${ME.name}</span>
       ${roleSel}
-      ${userHasRole(ME,'admin')? `
+      ${isPrivileged()? `
         <div class="menu" id="adminMenu">
           <button class="btn" id="adminBtn" type="button">Admin ▾</button>
           <div class="dropdown">
@@ -221,7 +216,7 @@ function viewEvents(){
     const mine=isMeSignedInEvent(a);
     const minePill = mine ? `<span class="pill mine-pill">✔ Přihlášen</span>` : '';
 
-    const adminControls = userHasRole(ME,'admin')? `
+    const adminControls = isPrivileged()? `
       <div class="row">
         <button class="btn" type="button" onclick="editEvent('${a.id}')">Upravit</button>
         <button class="btn danger" type="button" onclick="deleteEvent('${a.id}')">Smazat</button>
@@ -248,10 +243,11 @@ function viewEvents(){
 function inRoleCapacity(a, roleKey){ const cap=(a.capacity?.[roleKey]||0); const list=a.signups?.[roleKey]||[]; return list.length<cap; }
 function joinEvent(aid){ USERS=load(DB_USERS); ACTIONS=load(DB_ACTIONS); const a=ACTIONS.find(x=>x.id===aid); if(!a||!ME) return; const unlockMs=getUnlockMs(a); if(unlockMs!==0 && nowMs()<unlockMs){ alert('Přihlašování ještě není otevřené.'); return; } ensureActiveRole(); if(!ACTIVE_ROLE){ alert('Nemáte vybranou veřejnou roli'); return; } a.signups[ACTIVE_ROLE]=a.signups[ACTIVE_ROLE]||[]; if(a.signups[ACTIVE_ROLE].includes(ME.id)){ toast('Už jste přihlášen.'); renderApp(); return; } if(!inRoleCapacity(a, ACTIVE_ROLE)){ toast('Kapacita této role je plná.'); return; } a.signups[ACTIVE_ROLE].push(ME.id); save(DB_ACTIONS,ACTIONS); toast('Přihlášení úspěšné', a.title); renderApp(); }
 function leaveEvent(aid){ USERS=load(DB_USERS); ACTIONS=load(DB_ACTIONS); const a=ACTIONS.find(x=>x.id===aid); if(!a||!ME||!ACTIVE_ROLE) return; a.signups[ACTIVE_ROLE]=(a.signups[ACTIVE_ROLE]||[]).filter(x=>x!==ME.id); save(DB_ACTIONS,ACTIONS); toast('Odhlášení úspěšné', a.title); renderApp(); }
-function deleteEvent(aid){ if(!userHasRole(ME,'admin')) return; if(!confirm('Smazat událost?')) return; ACTIONS=load(DB_ACTIONS); const a=ACTIONS.find(x=>x.id===aid); ACTIONS=ACTIONS.filter(x=>x.id!==aid); save(DB_ACTIONS,ACTIONS); toast('Událost smazána', a?.title||''); renderApp(); }
+function deleteEvent(aid){ if(!isPrivileged()) return; if(!confirm('Smazat událost?')) return; ACTIONS=load(DB_ACTIONS); const a=ACTIONS.find(x=>x.id===aid); ACTIONS=ACTIONS.filter(x=>x.id!==aid); save(DB_ACTIONS,ACTIONS); toast('Událost smazána', a?.title||''); renderApp(); }
 
 /* ===== Create/Edit events ===== */
 function viewCreateEvent(editId=null){
+  if(!isPrivileged()) return;
   CURRENT_VIEW='create'; CURRENT_EDIT_ID=editId;
   const app=$('#app');
   ACTIONS=load(DB_ACTIONS);
@@ -296,7 +292,7 @@ function viewCreateEvent(editId=null){
 }
 
 function saveEvent(editId){
-  if(!userHasRole(ME,'admin')){ alert('Jen admin'); return; }
+  if(!isPrivileged()){ alert('Jen admin/podpora'); return; }
   const d=(document.getElementById('ev_date')?.value||'').trim();
   const f=(document.getElementById('ev_from')?.value||'').trim();
   const t=(document.getElementById('ev_to')?.value||'').trim();
@@ -323,99 +319,200 @@ function saveEvent(editId){
   renderApp();
 }
 
-/* ===== Other views ===== */
-function viewPastEvents(){ CURRENT_VIEW='past'; try{ archiveSweep(); }catch(e){ console.warn(e); } const app=$('#app'); const pubs=getPublicRoleKeys(); const cards=(load(DB_ARCHIVE)||[]).map(a=>{ const capHtml=pubs.map(r=>{ const list=a.signups?.[r]||[]; const names=list.map(id=> (getUserById(id)||{}).name ).filter(Boolean).join(', '); return `<li><b>${roleLabel(r)}</b>: ${list.length}/${(a.capacity?.[r]||0)} — ${names||'—'}</li>`; }).join(''); return `<div class="card"><div style="font-weight:700">${a.title}</div><div class="muted">${a.date} • ${a.location||'—'} • ${(a.timeFrom||'')}${a.timeTo?('–'+a.timeTo):''}</div><ul class="list-plain" style="margin-top:8px">${capHtml}</ul></div>`; }).join(''); app.innerHTML=`<h3>Proběhlé akce</h3>${cards||'<div class="card muted">Žádné záznamy.</div>'}`; }
+/* ===== Members (with password & roles management) ===== */
 function viewMembers(){
   CURRENT_VIEW='members';
-  USERS=load(DB_USERS);
+  USERS=load(DB_USERS); ROLES=load(DB_ROLES);
   const app=$('#app');
 
-  const rows=USERS.map(u=>{
-    const rolesHtml=(u.roles||[]).map(roleLabel).join(', ')||'—';
+  const roleChips = (u)=>{
+    const chips=(u.roles||[]).map(rk=>`<span class="chip">${roleLabel(rk)}<button class="btn ghost danger" type="button" onclick="toggleUserRole('${u.id}','${rk}',false)">×</button></span>`).join('');
+    return chips || '<span class="muted">—</span>';
+  };
 
-    // --- Admin akce ---
-    const adminBtns = userHasRole(ME,'admin') ? `
-      <div class="row" style="margin-top:6px">
-        <button class="btn" type="button" onclick="toggleActive('${u.id}')">
-          ${u.isActive ? 'Deaktivovat' : 'Aktivovat'}
-        </button>
-        <button class="btn danger" type="button" onclick="deleteUser('${u.id}')">Smazat</button>
-      </div>` : '';
+  const roleCheckboxes = (u)=>{
+    const set=new Set(u.roles||[]);
+    return ROLES.map(r=>`
+      <label class="row" style="gap:6px">
+        <input type="checkbox" ${set.has(r.key)?'checked':''} onchange="toggleUserRole('${u.id}','${r.key}', this.checked)">
+        ${r.label} <span class="muted">(${r.key})</span>
+      </label>
+    `).join('');
+  };
 
-    return `<div class="card">
-      <div><b>${u.name}</b> <span class="muted">(${u.isActive?'aktivní':'deaktivován'})</span></div>
-      <div class="muted">Role: ${rolesHtml}</div>
-      ${adminBtns}
-    </div>`;
-  }).join('');
+  const rows=USERS.map(u=>`
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <div>
+          <div><b>${u.name}</b> <span class="muted">(${u.isActive?'aktivní':'deaktivován'})</span></div>
+          <div class="muted">Role: ${roleChips(u)}</div>
+        </div>
+        ${isPrivileged()?`
+          <div class="row">
+            <button class="btn" type="button" onclick="toggleActive('${u.id}')">${u.isActive?'Deaktivovat':'Aktivovat'}</button>
+            <button class="btn danger" type="button" onclick="deleteUser('${u.id}')">Smazat</button>
+          </div>`:''}
+      </div>
 
-  // --- Admin možnost přidat nového ---
-  const addBox = userHasRole(ME,'admin') ? `
+      ${isPrivileged()?`
+        <div class="admin-box" style="margin-top:8px">
+          <div class="grid3">
+            <label>Jméno<input class="input" id="un_${u.id}" value="${u.name}" /></label>
+            <label>Heslo (viditelné)<input class="input" id="up_${u.id}" value="${u.password||''}" /></label>
+            <label>Aktivní<input type="checkbox" id="ua_${u.id}" ${u.isActive?'checked':''} /></label>
+          </div>
+          <div class="grid3" style="margin-top:8px">
+            <div>
+              <b>Přiřadit role</b>
+              <div style="margin-top:6px">${roleCheckboxes(u)}</div>
+            </div>
+            <div></div><div></div>
+          </div>
+          <div class="row" style="justify-content:flex-end;margin-top:10px">
+            <button class="btn primary" type="button" onclick="saveUserInline('${u.id}')">Uložit změny</button>
+          </div>
+        </div>`:''}
+    </div>
+  `).join('');
+
+  const addBox = isPrivileged()?`
     <div class="card" style="margin-top:12px">
       <h4>Přidat člena</h4>
-      <input id="newName" class="input" placeholder="Jméno">
-      <input id="newPass" class="input" placeholder="Heslo">
-      <button class="btn primary" type="button" onclick="addUser()">Přidat</button>
+      <div class="grid3">
+        <input id="newName" class="input" placeholder="Jméno">
+        <input id="newPass" class="input" placeholder="Heslo">
+        <label class="row" style="gap:6px"><input type="checkbox" id="newActive" checked> Aktivní</label>
+      </div>
+      <div style="margin-top:8px">
+        <b>Role</b>
+        <div id="newRoles" style="margin-top:6px">
+          ${ROLES.map(r=>`
+            <label class="row" style="gap:6px">
+              <input type="checkbox" value="${r.key}"> ${r.label} <span class="muted">(${r.key})</span>
+            </label>`).join('')}
+        </div>
+      </div>
+      <div class="row" style="justify-content:flex-end;margin-top:10px">
+        <button class="btn primary" type="button" onclick="addUser()">Přidat</button>
+      </div>
     </div>` : '';
 
   app.innerHTML=`<h3>Členové</h3>${rows}${addBox}`;
 }
 
+function toggleUserRole(uid, roleKey, on){
+  USERS=load(DB_USERS);
+  const u=getUserById(uid); if(!u) return;
+  u.roles=u.roles||[];
+  const has=u.roles.includes(roleKey);
+  if(on===false || (on===undefined && has)){ u.roles=u.roles.filter(r=>r!==roleKey); }
+  else if(!has){ u.roles.push(roleKey); }
+  save(DB_USERS,USERS);
+  // nelagovat: jen vizuální refresh současné stránky
+  viewMembers();
+}
+
+function saveUserInline(uid){
+  USERS=load(DB_USERS);
+  const u=getUserById(uid); if(!u) return;
+  const n=document.getElementById('un_'+uid)?.value?.trim()||u.name;
+  const p=document.getElementById('up_'+uid)?.value||u.password;
+  const a=!!document.getElementById('ua_'+uid)?.checked;
+  u.name=n; u.password=p; u.isActive=a;
+  save(DB_USERS,USERS);
+  toast('Uživatel uložen', u.name);
+  viewMembers();
+}
+
 function toggleActive(uid){
   USERS=load(DB_USERS);
-  const u=getUserById(uid);
-  if(!u) return;
+  const u=getUserById(uid); if(!u) return;
   u.isActive=!u.isActive;
   save(DB_USERS,USERS);
-  renderApp();
+  viewMembers();
 }
 function deleteUser(uid){
   if(!confirm('Opravdu smazat uživatele?')) return;
   USERS=load(DB_USERS).filter(u=>u.id!==uid);
   save(DB_USERS,USERS);
-  renderApp();
+  viewMembers();
 }
 function addUser(){
   const n=$('#newName').value.trim();
   const p=$('#newPass').value.trim();
+  const a=$('#newActive').checked;
   if(!n||!p) return alert('Vyplň jméno i heslo');
+  const rks=[...document.querySelectorAll('#newRoles input[type=checkbox]:checked')].map(i=>i.value);
   USERS=load(DB_USERS);
-  USERS.push({id:uid(),name:n,password:p,roles:[],isActive:true});
+  USERS.push({id:uid(),name:n,password:p,roles:rks,isActive:a});
   save(DB_USERS,USERS);
-  renderApp();
+  viewMembers();
 }
+
+/* ===== Roles (CRUD) ===== */
 function viewRoles(){
   CURRENT_VIEW='roles';
   ROLES=load(DB_ROLES);
   const app=$('#app');
 
-  const list=ROLES.map(r=>{
-    const adminBtns = userHasRole(ME,'admin') ? `
-      <div class="row" style="margin-top:6px">
-        <button class="btn danger" type="button" onclick="deleteRole('${r.key}')">Smazat</button>
-      </div>` : '';
-    return `<div class="card">
+  const list=ROLES.map(r=>`
+    <div class="card">
       <b>${r.label}</b> <span class="muted">(${r.key})</span> • ${r.isPublic?'veřejná':'neveřejná'}
-      ${adminBtns}
-    </div>`;
-  }).join('');
+      ${isPrivileged()?`
+      <div class="row" style="margin-top:6px">
+        <button class="btn" type="button" onclick="editRoleOpen('${r.key}')">Upravit</button>
+        <button class="btn danger" type="button" onclick="deleteRole('${r.key}')">Smazat</button>
+      </div>`:''}
+    </div>`).join('');
 
-  const addBox = userHasRole(ME,'admin') ? `
+  const addBox = isPrivileged()?`
     <div class="card" style="margin-top:12px">
       <h4>Nová role</h4>
       <input id="newRoleKey" class="input" placeholder="klíč (např. ridic)">
       <input id="newRoleLabel" class="input" placeholder="Popisek (Řidič)">
-      <label><input type="checkbox" id="newRolePublic"> Veřejná role</label>
-      <button class="btn primary" type="button" onclick="addRole()">Přidat roli</button>
+      <label class="row" style="gap:6px"><input type="checkbox" id="newRolePublic" checked> Veřejná role</label>
+      <div class="row" style="justify-content:flex-end;margin-top:8px">
+        <button class="btn primary" type="button" onclick="addRole()">Přidat roli</button>
+      </div>
     </div>` : '';
 
   app.innerHTML=`<h3>Role</h3>${list}${addBox}`;
 }
 
-function deleteRole(key){
-  ROLES=load(DB_ROLES).filter(r=>r.key!==key);
+function editRoleOpen(key){
+  ROLES=load(DB_ROLES);
+  const r=ROLES.find(x=>x.key===key); if(!r) return;
+  const app=$('#app');
+  app.innerHTML=`
+    <h3>Upravit roli</h3>
+    <div class="card">
+      <label>Klíč<input class="input" id="er_key" value="${r.key}" disabled></label>
+      <label>Popisek<input class="input" id="er_label" value="${r.label}"></label>
+      <label class="row" style="gap:6px"><input type="checkbox" id="er_pub" ${r.isPublic?'checked':''}> Veřejná role</label>
+      <div class="row" style="justify-content:flex-end;margin-top:10px">
+        <button class="btn" type="button" onclick="viewRoles()">Zpět</button>
+        <button class="btn primary" type="button" onclick="saveRole()">Uložit</button>
+      </div>
+    </div>`;
+}
+function saveRole(){
+  const key=document.getElementById('er_key').value;
+  const label=document.getElementById('er_label').value.trim();
+  const pub=document.getElementById('er_pub').checked;
+  ROLES=load(DB_ROLES);
+  const r=ROLES.find(x=>x.key===key); if(!r) return;
+  r.label=label; r.isPublic=pub;
   save(DB_ROLES,ROLES);
-  renderApp();
+  toast('Role uložena', r.label);
+  viewRoles();
+}
+function deleteRole(key){
+  if(!confirm('Smazat roli?')) return;
+  ROLES=load(DB_ROLES).filter(r=>r.key!==key);
+  // zároveň odeber roli všem uživatelům
+  USERS=load(DB_USERS).map(u=>({ ...u, roles:(u.roles||[]).filter(rk=>rk!==key) }));
+  save(DB_ROLES,ROLES); save(DB_USERS,USERS);
+  viewRoles();
 }
 function addRole(){
   const k=$('#newRoleKey').value.trim();
@@ -426,8 +523,10 @@ function addRole(){
   if(ROLES.find(r=>r.key===k)) return alert('Role s tímto klíčem už existuje');
   ROLES.push({key:k,label:l,isPublic:pub});
   save(DB_ROLES,ROLES);
-  renderApp();
+  viewRoles();
 }
+
+/* ===== Activity, Export ===== */
 function viewActivity(){ CURRENT_VIEW='activity'; const app=$('#app'); const list=(load(DB_ACTIVITY)||[]).slice(-200).reverse().map(a=>{ const ts=new Date(a.ts).toLocaleString(); return `<li>${ts}: <b>${a.userName||a.userId||'uživatel'}</b> — ${a.type} (${a.eventTitle||a.eventId||''})</li>`; }).join(''); app.innerHTML=`<h3>Aktivita</h3><div class="card"><ul class="list-plain">${list||'<li class="muted">Žádná aktivita.</li>'}</ul></div>`; }
 function viewExport(){ CURRENT_VIEW='export'; const app=$('#app'); app.innerHTML=`<h3>Export / Záloha</h3><div class="card"><div class="row"><button class="btn" type="button" onclick="downloadJson()">Stáhnout JSON</button></div></div>`; }
 function downloadJson(){ const data={users:load(DB_USERS),roles:load(DB_ROLES),actions:load(DB_ACTIONS),archive:load(DB_ARCHIVE),activity:load(DB_ACTIVITY)}; const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='smenar_backup.json'; a.click(); }
@@ -441,7 +540,15 @@ function renderApp(){
       if(sid){ USERS=load(DB_USERS); const u=getUserById(sid); if(u && u.isActive!==false){ ME=u; ensureActiveRole(); } else localStorage.removeItem(DB_SESSION); }
     }
     if(!ME){ viewLogin(); return; }
-    switch(CURRENT_VIEW){ case 'create': viewCreateEvent(CURRENT_EDIT_ID); break; case 'members': viewMembers(); break; case 'roles': viewRoles(); break; case 'activity': viewActivity(); break; case 'past': viewPastEvents(); break; case 'export': viewExport(); break; default: viewEvents(); }
+    switch(CURRENT_VIEW){
+      case 'create': viewCreateEvent(CURRENT_EDIT_ID); break;
+      case 'members': viewMembers(); break;
+      case 'roles': viewRoles(); break;
+      case 'activity': viewActivity(); break;
+      case 'past': viewPastEvents(); break;
+      case 'export': viewExport(); break;
+      default: viewEvents();
+    }
   }catch(e){
     const el=document.getElementById('err'); if(el){ el.textContent='Render error: '+(e.message||e); el.style.display='block'; }
     console.error('Render error', e);
@@ -463,6 +570,15 @@ window.viewExport=viewExport;
 window.joinEvent=joinEvent;
 window.leaveEvent=leaveEvent;
 window.logout=function(){ localStorage.removeItem(DB_SESSION); ME=null; ACTIVE_ROLE=null; renderHeader(); viewLogin(); };
+window.toggleActive=toggleActive;
+window.deleteUser=deleteUser;
+window.addUser=addUser;
+window.toggleUserRole=toggleUserRole;
+window.saveUserInline=saveUserInline;
+window.editRoleOpen=editRoleOpen;
+window.saveRole=saveRole;
+window.deleteRole=deleteRole;
+window.addRole=addRole;
   </script>
 </body>
 </html>
