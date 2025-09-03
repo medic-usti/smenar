@@ -71,14 +71,14 @@
 
   <!-- Supabase JS (v2) přes ESM import -->
   <script type="module">
-/* ============ SUPABASE CONFIG ============ */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const SUPABASE_URL = "https://lqpyavwhzpvdbxdidfry.supabase.co";          // ← doplň
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxxcHlhdndoenB2ZGJ4ZGlkZnJ5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTY4NDQxNzYsImV4cCI6MjA3MjQyMDE3Nn0.baWqIwQrlz8KJ6CfOt7-md7FZvBDSXagFXNpHy_eOH4";                         // ← doplň
+/* ====== DOPLŇ: tvoje Supabase přístupy ====== */
+const SUPABASE_URL = "https://YOUR-PROJECT.supabase.co";
+const SUPABASE_ANON_KEY = "YOUR-ANON-KEY";
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-/* ============ UI HELPERS / STAV ============ */
+/* ====== Konstanty & stav ====== */
 const DB_USERS="users", DB_ACTIONS="actions", DB_ROLES="roles", DB_SESSION="session", DB_ACTIVITY="activity", DB_ARCHIVE="archive";
 
 let USERS=[], ACTIONS=[], ROLES=[], ACTIVITY=[], ARCHIVE=[];
@@ -93,7 +93,6 @@ const nowMs=()=>Date.now();
 const uid=()=>crypto.randomUUID?crypto.randomUUID():('id'+Date.now()+Math.random().toString(16).slice(2));
 
 function toast(msg,sub){ const w=$('#toasts'); const d=document.createElement('div'); d.className='toast'; d.innerHTML=`<div>${msg}</div>${sub? `<small>${sub}</small>`:''}`; w.appendChild(d); setTimeout(()=>{ d.style.opacity='0'; d.style.transform='translateY(8px)'; d.style.transition='all .25s'; setTimeout(()=>w.removeChild(d),260); },3000); }
-
 function showErr(msg){ const el=document.getElementById('err'); el.textContent=String(msg); el.style.display='block'; console.error(msg); }
 window.addEventListener('error', (e)=>{ showErr(e.message || 'Neznámá chyba'); });
 window.addEventListener('unhandledrejection', (e)=>{ showErr(e.reason?.message || e.reason || 'Nezachycené odmítnutí Promise'); });
@@ -103,10 +102,10 @@ function fmtAbs(ts){ try{ return new Date(ts).toLocaleString(); }catch{ return "
 function renderDbInd(){ const dot=$('#dbDot'), st=$('#dbState'), last=$('#dbLast'); st.textContent=DB_ONLINE?'Online':'Offline'; dot.classList.toggle('ok', DB_ONLINE); last.textContent=`${fmtAgo(DB_LAST_TS)} (${DB_LAST_SRC})`; const wrap=$('#dbInd'); if(wrap) wrap.title=`DB: ${DB_ONLINE?'Online':'Offline'} • naposledy: ${fmtAbs(DB_LAST_TS)} (${DB_LAST_SRC})`; }
 setInterval(renderDbInd,1000);
 
-/* ============ SUPABASE: KV HELPERS ============ */
+/* ====== Supabase KV helpery ====== */
 async function kvLoad(key){
   const {data, error} = await supabase.from('kv').select('data').eq('key', key).single();
-  if(error && error.code!=='PGRST116') throw error; // 116 = not found
+  if(error && error.code!=='PGRST116') throw error; // not found
   return data?.data ?? [];
 }
 async function kvSave(key, value){
@@ -114,14 +113,15 @@ async function kvSave(key, value){
   if(error) throw error;
   DB_ONLINE = true; DB_LAST_TS = Date.now(); DB_LAST_SRC='save';
 }
+
+/* ====== Realtime odběr ====== */
 function subscribeRealtime(){
   supabase
     .channel('kv-realtime')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'kv' }, (payload) => {
       const row = payload.new || payload.old;
       if(!row?.key) return;
-      // login/editor ponecháme nedotčený (ať se nepřepíše rozpracovaná práce)
-      if(CURRENT_VIEW==='create' || CURRENT_VIEW==='login') return;
+      if(CURRENT_VIEW==='create' || CURRENT_VIEW==='login') return; // pauza, ať se nepřepíše formulář
 
       const arr = row.data || [];
       switch(row.key){
@@ -139,9 +139,31 @@ function subscribeRealtime(){
     });
 }
 
-/* ============ SEED & INIT ============ */
+/* ====== 30s auto-refresh (polling) — mimo login a create ====== */
+const _eq = (a,b)=>JSON.stringify(a)===JSON.stringify(b);
+async function refreshFromDB(){
+  if (CURRENT_VIEW === 'login' || CURRENT_VIEW === 'create') return;
+  try{
+    const [u, r, a, ar, ac] = await Promise.all([
+      kvLoad(DB_USERS), kvLoad(DB_ROLES), kvLoad(DB_ACTIONS), kvLoad(DB_ARCHIVE), kvLoad(DB_ACTIVITY)
+    ]);
+    let changed = false;
+    if(!_eq(USERS,u))   { USERS=u;   changed=true; }
+    if(!_eq(ROLES,r))   { ROLES=r;   changed=true; }
+    if(!_eq(ACTIONS,a)) { ACTIONS=a; changed=true; }
+    if(!_eq(ARCHIVE,ar)){ ARCHIVE=ar;changed=true; }
+    if(!_eq(ACTIVITY,ac)){ACTIVITY=ac;changed=true; }
+    if(changed){ DB_ONLINE=true; DB_LAST_TS=Date.now(); DB_LAST_SRC='poll'; renderApp(); }
+  }catch(err){
+    console.warn('poll error', err);
+    DB_ONLINE=false; DB_LAST_TS=Date.now(); DB_LAST_SRC='poll-error';
+  }
+}
+const POLL_MS = 30000;
+setInterval(refreshFromDB, POLL_MS);
+
+/* ====== Seed & Init ====== */
 async function seedIfEmpty(){
-  // když něco chybí, založíme default
   let changed=false;
   if(!ROLES.length){ ROLES=[{key:'ridic',label:'Řidič',isPublic:true},{key:'zza',label:'ZZA',isPublic:true},{key:'zdravotnik',label:'Zdravotník',isPublic:true},{key:'support',label:'Podpora',isPublic:false}]; await kvSave(DB_ROLES, ROLES); changed=true; }
   if(!USERS.length){ USERS=[
@@ -157,7 +179,6 @@ async function seedIfEmpty(){
 }
 async function init(){
   try{
-    // první load
     [USERS, ROLES, ACTIONS, ARCHIVE, ACTIVITY] = await Promise.all([
       kvLoad(DB_USERS), kvLoad(DB_ROLES), kvLoad(DB_ACTIONS), kvLoad(DB_ARCHIVE), kvLoad(DB_ACTIVITY)
     ]);
@@ -165,6 +186,7 @@ async function init(){
     await seedIfEmpty();
     subscribeRealtime();
     renderApp();
+    refreshFromDB(); // okamžitý první pull
   }catch(e){
     showErr('Chyba připojení k DB: '+(e.message||e));
     DB_ONLINE=false; DB_LAST_TS=Date.now(); DB_LAST_SRC='error';
@@ -172,7 +194,7 @@ async function init(){
 }
 init();
 
-/* ============ PRAVIDLA / ROLE ============ */
+/* ====== Pravidla / role ====== */
 function userHasRole(u,r){ return (u?.roles||[]).includes(r); }
 function isSupportUser(u){ return !!u && ((u.roles||[]).includes('support') || ((u?.name||'').trim().toLowerCase()==='podpora')); }
 function isPrivileged(){ return ME && (userHasRole(ME,'admin') || userHasRole(ME,'support')); }
@@ -185,13 +207,13 @@ function canSeeRoleKey(key){ return !(key==='support' && !isSupportUser(ME)); }
 function canSeeRoleObj(r){ return canSeeRoleKey(r?.key); }
 function canSeeUser(u){ if(isSupportUser(ME)) return true; return !userHasRole(u,'support'); }
 
-/* ============ AKTIVITA ============ */
+/* ====== Aktivita ====== */
 async function logActivity(type, eventId, eventTitle, detail){
   ACTIVITY.push({ ts:Date.now(), type, eventId, eventTitle, detail, userId:ME?.id, userName:ME?.name });
   await kvSave(DB_ACTIVITY, ACTIVITY);
 }
 
-/* ============ EVENTY – POMOCNÉ ============ */
+/* ====== Event helpers ====== */
 function safeHHMM(s){ return /^\d{2}:\d{2}$/.test(s||'')?s:''; }
 function eventEndMs(a){ const d=a?.date||today(); const end=safeHHMM(a?.timeTo)||safeHHMM(a?.timeFrom)||'23:59'; const t=new Date(`${d}T${end}`).getTime(); return isNaN(t)?new Date(`${d}T23:59`).getTime():t; }
 function isPastEvent(a){ return nowMs()>eventEndMs(a); }
@@ -199,7 +221,7 @@ function getUnlockMs(a){ if(!a||!a.signupUnlock) return 0; const ms=new Date(a.s
 function sortEvents(a,b){ const A=(a.date||'')+' '+(a.timeFrom||'00:00'); const B=(b.date||'')+' '+(b.timeFrom||'00:00'); return A.localeCompare(B); }
 async function archiveSweep(){ const toMove=(ACTIONS||[]).filter(isPastEvent); if(!toMove.length) return; ACTIONS=ACTIONS.filter(a=>!isPastEvent(a)); await kvSave(DB_ACTIONS,ACTIONS); ARCHIVE=[...toMove.slice().sort(sortEvents).reverse(), ...ARCHIVE]; await kvSave(DB_ARCHIVE,ARCHIVE); }
 
-/* ============ HEADER + LOGIN ============ */
+/* ====== Header + Login ====== */
 function renderHeader(){
   const el=$('#hdr'); if(!ME){ el.innerHTML=''; return; }
   ensureActiveRole();
@@ -253,22 +275,15 @@ function viewLogin(){
   };
 }
 
-/* ============ VYKRESLENÍ SEKCÍ (Události, Archiv, Členové, Role, Aktivita, Export) ============ */
-// … (stejný vzhled i logika jako dřív, jen bez load()/save() na localStorage; pracujeme s paměťovými poli a zapisujeme do Supabase)
-
-/* ==== jen kvůli délce – shrnutí: zůstává stejná UI logika jako v předchozí verzi:
-   - viewEvents(), viewPastEvents() (vč. přiřazení/odebrání účastníků, poznámka, zaplaceno, historie, upravit/smazat)
-   - viewCreateEvent() + saveEvent()
-   - viewMembers() (skrytí podpory před adminem, editace, nové účty)
-   - viewRoles() (CRUD s omezením na support)
-   - viewActivity(), viewExport()
-   - joinEvent(), leaveEvent(), deleteEvent()
-   - updateEventBoth() – zapíše do actions i archive
-   - archiveSweep() – v Supabase (přes kv) 
-   Níže jsou jejich implementace s voláním kvSave().
-==== */
-
+/* ====== UI části ====== */
 function isMeSignedInEvent(a){ if(!ME) return false; for(const r of Object.keys(a.signups||{})){ if((a.signups[r]||[]).includes(ME.id)) return true; } return false; }
+function candidatesForRole(roleKey, a){
+  return (USERS||[])
+    .filter(u=>u.isActive!==false)
+    .filter(canSeeUser)
+    .filter(u=>userHasRole(u, roleKey))
+    .filter(u=>!(a.signups?.[roleKey]||[]).includes(u.id));
+}
 
 async function updateEventBoth(aid, updater){
   let changed=false;
@@ -279,14 +294,7 @@ async function updateEventBoth(aid, updater){
   if(changed){ renderApp(); }
 }
 
-/* === Assign / Unassign (aktivní i archiv) === */
-function candidatesForRole(roleKey, a){
-  return (USERS||[])
-    .filter(u=>u.isActive!==false)
-    .filter(canSeeUser)
-    .filter(u=>userHasRole(u, roleKey))
-    .filter(u=>!(a.signups?.[roleKey]||[]).includes(u.id));
-}
+/* === Assign / Unassign === */
 async function assignMember(aid, roleKey, uid){
   if(!isPrivileged()) return;
   let a = ACTIONS.find(x=>x.id===aid) || ARCHIVE.find(x=>x.id===aid);
@@ -425,7 +433,7 @@ async function saveEvent(editId){
   }
 }
 
-/* === VIEW: Události === */
+/* ====== View: Události ====== */
 function viewEvents(){
   CURRENT_VIEW='events';
   archiveSweep().catch(console.warn);
@@ -533,7 +541,7 @@ function viewEvents(){
   app.innerHTML=`<h3>Události</h3>${cards || '<div class="card muted">Žádné události.</div>'}`;
 }
 
-/* === VIEW: Proběhlé === */
+/* ====== View: Proběhlé ====== */
 function viewPastEvents(){
   CURRENT_VIEW='past';
   archiveSweep().catch(console.warn);
@@ -617,7 +625,7 @@ function viewPastEvents(){
   app.innerHTML=`<h3>Proběhlé akce</h3>${cards || '<div class="card muted">Žádné záznamy.</div>'}`;
 }
 
-/* === Členové === */
+/* ====== Členové ====== */
 async function toggleUserRole(uid, roleKey, on){
   const u=getUserById(uid); if(!u) return;
   if(!isSupportUser(ME) && (userHasRole(u,'support') || roleKey==='support')) return;
@@ -742,7 +750,7 @@ function viewMembers(){
   app.innerHTML=`<h3>Členové</h3>${rows}${addBox}`;
 }
 
-/* === Role === */
+/* ====== Role ====== */
 function viewRoles(){
   CURRENT_VIEW='roles';
   const app=$('#app');
@@ -814,7 +822,7 @@ async function addRole(){
   viewRoles();
 }
 
-/* === Aktivita + Export === */
+/* ====== Aktivita + Export ====== */
 function viewActivity(){
   CURRENT_VIEW='activity';
   const list=(ACTIVITY||[]).slice(-200).reverse().map(a=>{ const ts=new Date(a.ts).toLocaleString(); return `<li>${ts}: <b>${a.userName||a.userId||'uživatel'}</b> — ${a.type} ${a.eventTitle?('('+a.eventTitle+')'):''} ${a.detail?('— '+a.detail):''}</li>`; }).join('');
@@ -830,7 +838,7 @@ function downloadJson(){
   const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='smenar_backup.json'; a.click();
 }
 
-/* === Router === */
+/* ====== Router ====== */
 function renderApp(){
   try{
     renderHeader();
@@ -856,7 +864,7 @@ function renderApp(){
 }
 renderApp();
 
-/* === Globál. handlery === */
+/* ====== Global handlers ====== */
 window.viewCreateEvent=viewCreateEvent;
 window.saveEvent=saveEvent;
 window.viewEvents=viewEvents;
@@ -872,7 +880,6 @@ window.removeMember=removeMember;
 window.setEventPaid=setEventPaid;
 window.saveEventNote=saveEventNote;
 window.deleteEvent=deleteEvent;
-
 function logout(){
   localStorage.removeItem(DB_SESSION);
   ME=null; ACTIVE_ROLE=null;
