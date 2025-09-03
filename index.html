@@ -259,7 +259,6 @@ function renderHeader(){
   const prs=userPublicRoles(ME);
   const roleSel=(ACTIVE_ROLE && prs.length)?`<select class="select" id="selActiveRole">${prs.map(r=>`<option value="${r}" ${r===ACTIVE_ROLE?'selected':''}>${roleLabel(r)}</option>`).join('')}</select>`:`<span class="muted">Bez veřejné role</span>`;
 
-  // ➕ Přidáno: navigace pro všechny (Události / Proběhlé)
   const publicNav = `
     <div class="row">
       <button class="btn" type="button" onclick="viewEvents()">Události</button>
@@ -590,7 +589,10 @@ function viewEvents(){
       <div class="card ${mine?'event-mine':''}">
         <div class="row" style="justify-content:space-between;align-items:flex-start">
           <div>
-            <div style="font-weight:700">${a.title} ${minePill} ${a.isPaid?'<span class="badge paid" title="Zaplaceno">Zaplaceno</span>':''}</div>
+            <div style="font-weight:700">
+              ${a.title} ${minePill} 
+              ${isPrivileged() && a.isPaid ? '<span class="badge paid" title="Zaplaceno">Zaplaceno</span>' : ''}
+            </div>
             <div class="muted">${a.date} • ${a.location||'—'} • ${(a.timeFrom||'')}${a.timeTo?('–'+a.timeTo):''}</div>
             ${a.signupUnlock? `<div class="muted small">Odemknutí přihlašování: <b>${new Date(a.signupUnlock).toLocaleString()}</b></div>` : ''}
           </div>
@@ -692,7 +694,10 @@ function viewPastEvents(){
       </div>` : '';
 
     return `<div class="card">
-      <div style="font-weight:700">${a.title} ${a.isPaid?'<span class="badge paid" title="Zaplaceno">Zaplaceno</span>':''}</div>
+      <div style="font-weight:700">
+        ${a.title}
+        ${isPrivileged() && a.isPaid ? '<span class="badge paid" title="Zaplaceno">Zaplaceno</span>' : ''}
+      </div>
       <div class="muted">${a.date} • ${a.location||'—'} • ${(a.timeFrom||'')}${a.timeTo?('–'+a.timeTo):''}</div>
       ${adminControls}
       <ul class="list-plain" style="margin-top:8px">${capHtml}</ul>
