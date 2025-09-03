@@ -37,9 +37,34 @@
     .toast{background:#111827;color:#fff;border-radius:8px;padding:10px 12px;box-shadow:0 8px 24px rgba(0,0,0,.25);max-width:360px}
     .toast small{color:#cbd5e1}
     @media (max-width:640px){.grid2,.grid3{grid-template-columns:1fr} header{flex-wrap:wrap;gap:8px}}
+	  /* DB status badge (pravý dolní roh) */
+.db-ind {
+  position: fixed; right: 12px; bottom: 12px; z-index: 60;
+  background: #111827; color: #fff; border-radius: 10px;
+  padding: 8px 10px; font-size: 12px; box-shadow: 0 8px 24px rgba(0,0,0,.25);
+  display: inline-flex; align-items: center; gap: 8px; border: 1px solid rgba(255,255,255,.08);
+}
+.db-dot {
+  width: 8px; height: 8px; border-radius: 999px; background: #ef4444;
+  box-shadow: 0 0 0 2px rgba(239,68,68,.25);
+}
+.db-dot.ok {
+  background: #10b981;
+  box-shadow: 0 0 0 2px rgba(16,185,129,.25);
+}
+.db-muted { color: #cbd5e1; }
+
   </style>
   <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
 </head>
+	<!-- DB stav: Online/Offline + poslední sync -->
+<div id="dbInd" class="db-ind" title="Stav databáze">
+  <span id="dbDot" class="db-dot"></span>
+  <span><b>DB:</b> <span id="dbState">Offline</span></span>
+  <span class="db-muted">•</span>
+  <span class="db-muted">naposledy: <span id="dbLast">—</span></span>
+</div>
+
 <body>
   <header>
     <div class="row"><span style="font-size:20px">🗂️</span><b>Směnář</b></div>
@@ -82,6 +107,47 @@ const today=()=>new Date().toISOString().slice(0,10);
 const nowMs=()=>Date.now();
 const $=s=>document.querySelector(s);
 function toast(msg,sub){ const w=$('#toasts'); const d=document.createElement('div'); d.className='toast'; d.innerHTML=`<div>${msg}</div>${sub?`<small>${sub}</small>`:''}`; w.appendChild(d); setTimeout(()=>{ d.style.opacity='0'; d.style.transform='translateY(8px)'; d.style.transition='all .25s'; setTimeout(()=>w.removeChild(d),260); },3000); }
+// === DB indikátor ===
+let DB_ONLINE = false;
+let DB_LAST_TS = 0;       // ms
+let DB_LAST_SRC = '';     // 'realtime' | 'poll' | 'init'
+
+function fmtAgo(ts){
+  if(!ts) return "—";
+  const s = Math.max(0, Math.floor((Date.now() - ts)/1000));
+  if(s < 60) return `${s}s`;
+  const m = Math.floor(s/60);
+  if(m < 60) return `${m}m ${s%60}s`;
+  const h = Math.floor(m/60);
+  return `${h}h ${m%60}m`;
+}
+function fmtAbs(ts){
+  try { return new Date(ts).toLocaleString(); } catch { return "—"; }
+}
+function renderDbInd(){
+  const dot = document.getElementById('dbDot');
+  const st  = document.getElementById('dbState');
+  const last= document.getElementById('dbLast');
+  if(!dot||!st||!last) return;
+  st.textContent = DB_ONLINE ? 'Online' : 'Offline';
+  dot.classList.toggle('ok', DB_ONLINE);
+  last.textContent = `${fmtAgo(DB_LAST_TS)}${DB_LAST_SRC ? ` (${DB_LAST_SRC})` : ''}`;
+  // title s přesným časem
+  const wrap = document.getElementById('dbInd');
+  if(wrap) wrap.title = `DB: ${DB_ONLINE?'Online':'Offline'} • naposledy: ${fmtAbs(DB_LAST_TS)} ${DB_LAST_SRC?`(${DB_LAST_SRC})`:''}`;
+}
+function markDbOnline(src){
+  DB_ONLINE = true;
+  DB_LAST_TS = Date.now();
+  DB_LAST_SRC = src || '';
+  renderDbInd();
+}
+function markDbOffline(){
+  DB_ONLINE = false;
+  renderDbInd();
+}
+// pravidelně přepočítat "x s" text
+setInterval(renderDbInd, 5000);
 
 let USERS=load(DB_USERS), ACTIONS=load(DB_ACTIONS), ROLES=load(DB_ROLES), ACTIVITY=load(DB_ACTIVITY), ARCHIVE=load(DB_ARCHIVE);
 let ME=null, ACTIVE_ROLE=null, adminWatchTimer=null;
@@ -334,10 +400,13 @@ async function startRealtime(){
     (payload)=>{
       const row = payload.new && Object.keys(payload.new).length ? payload.new : payload.old;
       applyKvRow(row);
+	  markDbOnline('realtime');           // <<< přijat event z DB
       refreshFromLocalAndRender();
     }
   );
   await kvChannel.subscribe();
+  markDbOnline('realtime'); // <<< po úspěšném přihlášení k realtime kanálu
+
 }
 
 /*******************
@@ -347,11 +416,20 @@ function renderApp(){ renderHeader(); if(!ME){ viewLogin(); return; } viewEvents
 
 (async function init(){
   // 1) Stáhni DB → localStorage (max 3s)
-  try{ await Promise.race([bootSync(), new Promise((_,rej)=>setTimeout(()=>rej(new Error('bootSync timeout')),3000))]); }catch(_){}
-  // 2) Realtime kanál
+try{
+  await Promise.race([bootSync(), new Promise((_,rej)=>setTimeout(()=>rej(new Error('bootSync timeout')),3000))]);
+  markDbOnline('init');               // <<< úvodní dotažení DB OK
+}catch(_){
+  markDbOffline();                    // <<< timeout/selhání initu
+}
+	// 2) Realtime kanál
   startRealtime();
   // 3) Fallback polling každých 15 s
-  setInterval(()=> bootSync().then(refreshFromLocalAndRender).catch(()=>{}), 30000);
+setInterval(() => 
+  bootSync()
+    .then(() => { markDbOnline('poll'); refreshFromLocalAndRender(); })
+    .catch(() => { markDbOffline(); })
+, 30000); // nebo 15000 podle tvého nastavení
   // 4) Session a render
   const sid=localStorage.getItem(DB_SESSION);
   if(sid){ ME=getUserById(sid); }
