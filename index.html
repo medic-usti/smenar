@@ -175,7 +175,9 @@ function viewLogin(){
 }
 
 /* ===== Events / Archive ===== */
-function safeHHMM(s){ return /^\d{2}:\d{2}$/.test(s||'')?s:''; }
+function safeHHMM(s) {
+  return /^\d{2}:\d{2}$/.test(s||'') ? s : '';
+}
 function eventEndMs(a){ const d=a?.date||today(); const end=safeHHMM(a?.timeTo)||safeHHMM(a?.timeFrom)||'23:59'; const t=new Date(`${d}T${end}`).getTime(); return isNaN(t)?new Date(`${d}T23:59`).getTime():t; }
 function isPastEvent(a){ return nowMs()>eventEndMs(a); }
 function getUnlockMs(a){ if(!a||!a.signupUnlock) return 0; const ms=new Date(a.signupUnlock).getTime(); return isNaN(ms)?0:ms; }
