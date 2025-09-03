@@ -105,7 +105,15 @@ let CURRENT_VIEW='events', CURRENT_EDIT_ID=null;
 /* ===== Seed ===== */
 (function seed(){
   if(!ROLES.length){ ROLES=[{key:'ridic',label:'Řidič',isPublic:true},{key:'zza',label:'ZZA',isPublic:true},{key:'zdravotnik',label:'Zdravotník',isPublic:true},{key:'support',label:'Podpora',isPublic:false}]; save(DB_ROLES,ROLES); }
-  if(!USERS.length){ USERS=[{id:'u1',name:'Podpora',password:'support',roles:['support','admin'],isActive:true},{id:'u2',name:'admin',password:'1111',roles:['admin'],isActive:true},{id:'u3',name:'Adam',password:'adam',roles:['ridic','zza'],isActive:true},{id:'u4',name:'Bára',password:'bara',roles:['zdravotnik'],isActive:true}]; save(DB_USERS,USERS); }
+  if(!USERS.length){
+    USERS=[
+      {id:'u1',name:'Podpora',password:'support',roles:['support','admin'],isActive:true},
+      {id:'u2',name:'admin',password:'1111',roles:['admin'],isActive:true},
+      {id:'u3',name:'Adam',password:'adam',roles:['ridic','zza'],isActive:true},
+      {id:'u4',name:'Bára',password:'bara',roles:['zdravotnik'],isActive:true}
+    ];
+    save(DB_USERS,USERS);
+  }
   if(!ACTIONS.length){ const cap={}, su={}; ['ridic','zza','zdravotnik'].forEach(k=>{ cap[k]=(k==='zza'?2:1); su[k]=[]; }); ACTIONS=[{id:'a1',date:today(),title:'Dozor – fotbal',location:'Stadion Kladno',timeFrom:'15:00',timeTo:'20:00',capacity:cap,signups:su,signupUnlock:null,isPaid:false,adminNote:''}]; save(DB_ACTIONS,ACTIONS); }
   if(!ACTIVITY.length) save(DB_ACTIVITY,[]);
   if(!ARCHIVE.length) save(DB_ARCHIVE,[]);
@@ -121,12 +129,14 @@ function ensureActiveRole(){ if(!ME){ACTIVE_ROLE=null;return;} const prs=userPub
 function isSupportUser(u){ return !!u && ((u.roles||[]).includes('support') || ((u?.name||'').trim().toLowerCase()==='podpora')); }
 function isPrivileged(){ return ME && (userHasRole(ME,'admin') || userHasRole(ME,'support')); }
 
-/* === NOVÉ: viditelnost role "support" pouze pro Podporu === */
-function canSeeRoleKey(key){
-  if(key==='support' && !isSupportUser(ME)) return false; // admin ji neuvidí
-  return true;
-}
+/* === Viditelnost role/uživatele "support" === */
+function canSeeRoleKey(key){ return !(key==='support' && !isSupportUser(ME)); }
 function canSeeRoleObj(r){ return canSeeRoleKey(r?.key); }
+function canSeeUser(u){
+  // Podpora vidí všechny, admin NEVIDÍ uživatele s rolí 'support'
+  if(isSupportUser(ME)) return true;
+  return !userHasRole(u,'support');
+}
 
 /* ===== Header + Login ===== */
 function renderHeader(){
@@ -177,7 +187,7 @@ function viewLogin(){
     const u=(USERS||[]).find(x=>x.name===n && x.password===p && x.isActive!==false);
     if(!u){ alert('Neplatné údaje'); return; }
     ME=u; localStorage.setItem(DB_SESSION, ME.id); ensureActiveRole();
-    CURRENT_VIEW='events'; CURRENT_EDIT_ID=null;
+    CURRENT_VIEW='events'; CURRENT_EDIT_ID=null; // reset po loginu
     renderApp();
   };
 }
@@ -371,7 +381,9 @@ function viewMembers(){
     `).join('');
   };
 
-  const rows=USERS.map(u=>`
+  const rows=USERS
+    .filter(canSeeUser)
+    .map(u=>`
     <div class="card">
       <div class="row" style="justify-content:space-between">
         <div>
@@ -433,10 +445,11 @@ function viewMembers(){
 }
 
 function toggleUserRole(uid, roleKey, on){
-  // Admin nesmí vidět/ovlivnit "support"
-  if(!canSeeRoleKey(roleKey)) return;
   USERS=load(DB_USERS);
   const u=getUserById(uid); if(!u) return;
+  // Admin nesmí měnit support uživatele ani roli support
+  if(!isSupportUser(ME) && (userHasRole(u,'support') || roleKey==='support')) return;
+
   u.roles=u.roles||[];
   const has=u.roles.includes(roleKey);
   if(on===false || (on===undefined && has)){ u.roles=u.roles.filter(r=>r!==roleKey); }
@@ -448,6 +461,8 @@ function toggleUserRole(uid, roleKey, on){
 function saveUserInline(uid){
   USERS=load(DB_USERS);
   const u=getUserById(uid); if(!u) return;
+  if(!isSupportUser(ME) && userHasRole(u,'support')) return; // blok pro admina
+
   const n=document.getElementById('un_'+uid)?.value?.trim()||u.name;
   const p=document.getElementById('up_'+uid)?.value||u.password;
   const a=!!document.getElementById('ua_'+uid)?.checked;
@@ -460,13 +475,19 @@ function saveUserInline(uid){
 function toggleActive(uid){
   USERS=load(DB_USERS);
   const u=getUserById(uid); if(!u) return;
+  if(!isSupportUser(ME) && userHasRole(u,'support')) return; // blok pro admina
+
   u.isActive=!u.isActive;
   save(DB_USERS,USERS);
   viewMembers();
 }
 function deleteUser(uid){
+  USERS=load(DB_USERS);
+  const u=getUserById(uid); if(!u) return;
+  if(!isSupportUser(ME) && userHasRole(u,'support')) return; // blok pro admina
+
   if(!confirm('Opravdu smazat uživatele?')) return;
-  USERS=load(DB_USERS).filter(u=>u.id!==uid);
+  USERS=USERS.filter(x=>x.id!==uid);
   save(DB_USERS,USERS);
   viewMembers();
 }
@@ -554,7 +575,6 @@ function addRole(){
   const l=$('#newRoleLabel').value.trim();
   const pub=$('#newRolePublic').checked;
   if(!k||!l) return alert('Vyplň klíč i popisek');
-  // Admin si může přidat jen ne-support role; Podpora může vše
   if(k==='support' && !isSupportUser(ME)) return alert('Tuto roli může spravovat jen Podpora.');
   ROLES=load(DB_ROLES);
   if(ROLES.find(r=>r.key===k)) return alert('Role s tímto klíčem už existuje');
@@ -615,7 +635,7 @@ window.leaveEvent=leaveEvent;
 function logout(){
   localStorage.removeItem(DB_SESSION);
   ME=null; ACTIVE_ROLE=null;
-  CURRENT_VIEW='events'; CURRENT_EDIT_ID=null;
+  CURRENT_VIEW='events'; CURRENT_EDIT_ID=null; // reset po logoutu
   renderHeader();
   viewLogin();
 }
