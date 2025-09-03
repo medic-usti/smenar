@@ -45,6 +45,7 @@
 
     .event-mine{border-color:#10b981 !important;box-shadow:0 8px 30px rgba(16,185,129,.25)}
     .mine-pill{background:#ecfdf5;border-color:#10b981;color:#065f46;font-weight:600}
+<link rel="icon" href="data:,">
 
     /* error banner */
     #err {position:fixed;left:12px;right:12px;bottom:68px;z-index:70;background:#fee2e2;color:#7f1d1d;border:1px solid #fecaca;border-radius:10px;padding:8px 10px;font-size:12px;display:none}
@@ -66,6 +67,21 @@
 
   <main><div id="app"></div></main>
   <div class="toast-wrap" id="toasts"></div>
+
+  <div id="err" style="position:fixed;left:12px;right:12px;bottom:68px;z-index:70;background:#fee2e2;color:#7f1d1d;border:1px solid #fecaca;border-radius:10px;padding:8px 10px;font-size:12px;display:none"></div>
+<script>
+(function(){
+  function showErr(msg){
+    const el=document.getElementById('err');
+    if(!el) return;
+    el.textContent=String(msg);
+    el.style.display='block';
+    console.error(msg);
+  }
+  window.addEventListener('error', e => showErr(e.message||'Neznámá chyba'));
+  window.addEventListener('unhandledrejection', e => showErr((e.reason&&e.reason.message)||e.reason||'Nezachycené odmítnutí Promise'));
+})();
+</script>
 
   <script>
 /* === Error reporting === */
@@ -178,6 +194,7 @@ function viewLogin(){
 function safeHHMM(s) {
   return /^\d{2}:\d{2}$/.test(s||'') ? s : '';
 }
+
 function eventEndMs(a){ const d=a?.date||today(); const end=safeHHMM(a?.timeTo)||safeHHMM(a?.timeFrom)||'23:59'; const t=new Date(`${d}T${end}`).getTime(); return isNaN(t)?new Date(`${d}T23:59`).getTime():t; }
 function isPastEvent(a){ return nowMs()>eventEndMs(a); }
 function getUnlockMs(a){ if(!a||!a.signupUnlock) return 0; const ms=new Date(a.signupUnlock).getTime(); return isNaN(ms)?0:ms; }
