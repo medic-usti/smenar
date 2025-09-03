@@ -34,6 +34,7 @@
     details summary{cursor:pointer; user-select:none; list-style:none}
     details summary::-webkit-details-marker{display:none}
     .admin-box{border:1px dashed var(--border); border-radius:10px; padding:10px; margin-top:10px; background:#fafbff}
+    .pub-box{border:1px solid var(--border); border-radius:10px; padding:10px; background:#fff}
     .key{font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; font-size:12px; padding:2px 6px; border:1px solid var(--border); border-radius:6px; background:#fff}
     .toast-wrap{position:fixed;right:16px;bottom:16px;display:flex;flex-direction:column;gap:8px;z-index:50}
     .toast{background:#111827;color:#fff;border-radius:8px;padding:10px 12px;box-shadow:0 8px 24px rgba(0,0,0,.25);max-width:360px}
@@ -50,6 +51,7 @@
     .chip .x{border:0;background:transparent;cursor:pointer;font-weight:700}
     .small{font-size:12px}
     .paid{background:#ecfdf5;border-color:#10b981;color:#065f46}
+    .prewrap{white-space:pre-wrap; word-break:break-word}
   </style>
 </head>
 <body>
@@ -89,6 +91,7 @@ const today=()=>new Date().toISOString().slice(0,10);
 const nowMs=()=>Date.now();
 const uid=()=>crypto.randomUUID?crypto.randomUUID():('id'+Date.now()+Math.random().toString(16).slice(2));
 
+function h(s){ return (s??'').toString().replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m])); }
 function toast(msg,sub){ const w=$('#toasts'); const d=document.createElement('div'); d.className='toast'; d.innerHTML=`<div>${msg}</div>${sub? `<small>${sub}</small>`:''}`; w.appendChild(d); setTimeout(()=>{ d.style.opacity='0'; d.style.transform='translateY(8px)'; d.style.transition='all .25s'; setTimeout(()=>w.removeChild(d),260); },3000); }
 function showErr(msg){ const el=document.getElementById('err'); el.textContent=String(msg); el.style.display='block'; console.error(msg); }
 window.addEventListener('error', (e)=>{ showErr(e.message || 'Neznámá chyba'); });
@@ -186,7 +189,11 @@ async function seedIfEmpty(){
   }
   if(!ACTIONS.length){
     const cap={}, su={}; ['ridic','zza','zdravotnik'].forEach(k=>{cap[k]=(k==='zza'?2:1); su[k]=[];});
-    ACTIONS=[{id:'a1',date:today(),title:'Dozor – fotbal',location:'Stadion Kladno',timeFrom:'15:00',timeTo:'20:00',capacity:cap,signups:su,signupUnlock:null,isPaid:false,adminNote:''}];
+    ACTIONS=[{
+      id:'a1',date:today(),title:'Dozor – fotbal',location:'Stadion Kladno',
+      timeFrom:'15:00',timeTo:'20:00',capacity:cap,signups:su,signupUnlock:null,
+      isPaid:false,adminNote:'', tech:'', notePublic:''
+    }];
     await kvSave(DB_ACTIONS,ACTIONS); changed=true;
   }
   if(!ARCHIVE.length){ await kvSave(DB_ARCHIVE,[]); changed=true; }
@@ -227,9 +234,9 @@ function roleLabel(k){ return (ROLES||[]).find(r=>r.key===k)?.label||k; }
 function getUserById(id){ return (USERS||[]).find(u=>u.id===id)||null; }
 function userPublicRoles(u){ const pubs=getPublicRoleKeys(); return (u?.roles||[]).filter(r=>pubs.includes(r)); }
 function ensureActiveRole(){ if(!ME){ACTIVE_ROLE=null;return;} const prs=userPublicRoles(ME); if(!prs.length){ACTIVE_ROLE=null;return;} if(!ACTIVE_ROLE||!prs.includes(ACTIVE_ROLE)) ACTIVE_ROLE=prs[0]; }
-function canSeeRoleKey(key){ return !(key==='support' && !isSupportUser(ME)); } // admin nevidí support; podpora vidí vše
+function canSeeRoleKey(key){ return !(key==='support' && !isSupportUser(ME)); }
 function canSeeRoleObj(r){ return canSeeRoleKey(r?.key); }
-function canSeeUser(u){ if(isSupportUser(ME)) return true; return !userHasRole(u,'support'); } // admin nevidí Support uživatele
+function canSeeUser(u){ if(isSupportUser(ME)) return true; return !userHasRole(u,'support'); }
 
 /* ===== Aktivita ===== */
 async function logActivity(type, eventId, eventTitle, detail){
@@ -337,7 +344,7 @@ async function removeMember(aid, roleKey, uid){
   await logActivity('unassign', a.id, a.title, `${u?.name||uid} (${roleLabel(roleKey)})`);
 }
 
-/* ===== Finance / poznámka ===== */
+/* ===== Finance / admin pozn. ===== */
 async function setEventPaid(aid, paid){
   if(!isPrivileged()) return;
   await updateEventBoth(aid, ev=>{ ev.isPaid=!!paid; });
@@ -391,17 +398,22 @@ function viewCreateEvent(editId=null){
   if(!isPrivileged()) return;
   CURRENT_VIEW='create'; CURRENT_EDIT_ID=editId;
   const a = editId ? (ACTIONS.find(x=>x.id===editId) || ARCHIVE.find(x=>x.id===editId)) : null;
+
   const date=a?.date || today();
   const title=a?.title || '';
   const location=a?.location || '';
   const tFrom=a?.timeFrom || '';
   const tTo=a?.timeTo || '';
   const unlock = a?.signupUnlock || '';
+  const tech = a?.tech || '';
+  const note = a?.notePublic || '';
+
   const pubs=getPublicRoleKeys();
   const caps = pubs.map(k=>{
     const v = a?.capacity?.[k] ?? (k==='zza'?2:1);
     return `<div><label>${roleLabel(k)} kapacita<input class="input" id="cap_${k}" type="number" min="0" value="${v}"></label></div>`;
   }).join('');
+
   $('#app').innerHTML=`
     <h3>${editId?'Upravit událost':'Nová událost'}</h3>
     <div class="card">
@@ -418,6 +430,13 @@ function viewCreateEvent(editId=null){
         <label>Přihlašování spuštěno od<input id="ev_unlock" class="input" type="datetime-local" value="${unlock? new Date(unlock).toISOString().slice(0,16):''}"></label>
         <div></div>
       </div>
+
+      <!-- Veřejné sekce -->
+      <div class="grid2" style="margin-top:8px">
+        <label>Technika<textarea id="ev_tech" class="textarea" placeholder="Seznam techniky, vybavení...">${h(tech)}</textarea></label>
+        <label>Poznámka (veřejná)<textarea id="ev_note" class="textarea" placeholder="Doplňující informace pro všechny...">${h(note)}</textarea></label>
+      </div>
+
       <div class="grid3" style="margin-top:8px">${caps}</div>
       <div class="row" style="justify-content:flex-end;margin-top:12px">
         <button class="btn" type="button" onclick="viewEvents()">Zpět</button>
@@ -433,19 +452,28 @@ async function saveEvent(editId){
   const ti=$('#ev_title')?.value?.trim()||'';
   const lo=$('#ev_loc')?.value?.trim()||'';
   const un=$('#ev_unlock')?.value?.trim()||'';
+  const tech=$('#ev_tech')?.value?.trim()||'';
+  const note=$('#ev_note')?.value?.trim()||'';
   const unlock= un? new Date(un).toISOString(): null;
   const pubs=getPublicRoleKeys();
   const cap={}; pubs.forEach(k=>{ const v=parseInt(document.getElementById('cap_'+k)?.value||'0',10); cap[k]=isNaN(v)?0:v; });
 
   if(editId){
-    await updateEventBoth(editId, ev=>{ ev.date=d; ev.timeFrom=f; ev.timeTo=t; ev.title=ti; ev.location=lo; ev.signupUnlock=unlock; ev.capacity=cap; });
+    await updateEventBoth(editId, ev=>{
+      ev.date=d; ev.timeFrom=f; ev.timeTo=t; ev.title=ti; ev.location=lo;
+      ev.signupUnlock=unlock; ev.capacity=cap; ev.tech=tech; ev.notePublic=note;
+    });
     const e=ACTIONS.find(x=>x.id===editId) || ARCHIVE.find(x=>x.id===editId);
     await logActivity('edit', editId, e?.title);
     toast('Událost upravena', ti);
     isPastEvent({date:d,timeTo:t,timeFrom:f}) ? viewPastEvents() : viewEvents();
   }else{
     const su={}; pubs.forEach(k=> su[k]=[] );
-    const a={ id: uid(), date:d, timeFrom:f, timeTo:t, title:ti, location:lo, signupUnlock:unlock, capacity:cap, signups:su, isPaid:false, adminNote:'' };
+    const a={
+      id: uid(), date:d, timeFrom:f, timeTo:t, title:ti, location:lo,
+      signupUnlock:unlock, capacity:cap, signups:su,
+      isPaid:false, adminNote:'', tech:tech, notePublic:note
+    };
     ACTIONS.push(a); await kvSave(DB_ACTIONS,ACTIONS);
     toast('Událost vytvořena', a.title);
     await logActivity('create', a.id, a.title);
@@ -460,6 +488,7 @@ function viewEvents(){
   const app=$('#app');
   ensureActiveRole();
   const pubs=getPublicRoleKeys();
+
   const cards=(ACTIONS||[]).slice().sort(sortEvents).map(a=>{
     const capHtml=pubs.map(r=>{
       const list=a.signups?.[r]||[];
@@ -485,6 +514,18 @@ function viewEvents(){
 
     const mine=isMeSignedInEvent(a);
     const minePill = mine ? `<span class="pill mine-pill">✔ Přihlášen</span>` : '';
+
+    const publicBoxes = `
+      <div class="grid2" style="margin-top:8px">
+        <div class="pub-box small">
+          <b>Technika</b>
+          <div class="prewrap" style="margin-top:4px">${h(a.tech)||'<span class="muted">—</span>'}</div>
+        </div>
+        <div class="pub-box small">
+          <b>Poznámka</b>
+          <div class="prewrap" style="margin-top:4px">${h(a.notePublic)||'<span class="muted">—</span>'}</div>
+        </div>
+      </div>`;
 
     const adminAssign = isPrivileged()? `
       <div class="admin-box small" style="margin-top:8px">
@@ -515,7 +556,7 @@ function viewEvents(){
         </div>
         <div style="margin-top:6px">
           <label>Poznámka pro adminy</label>
-          <textarea id="note_${a.id}" class="textarea" placeholder="Interní poznámka...">${a.adminNote||''}</textarea>
+          <textarea id="note_${a.id}" class="textarea" placeholder="Interní poznámka...">${h(a.adminNote||'')}</textarea>
           <div class="row" style="justify-content:flex-end;margin-top:6px">
             <button class="btn" type="button" onclick="saveEventNote('${a.id}', document.getElementById('note_${a.id}').value)">Uložit pozn.</button>
           </div>
@@ -547,6 +588,7 @@ function viewEvents(){
           ${adminControls}
         </div>
         <ul class="list-plain" style="margin-top:8px">${capHtml}</ul>
+        ${publicBoxes}
         ${adminAssign}
         ${adminFinance}
         <div class="row" style="margin-top:8px">${actionBtn}</div>
@@ -567,6 +609,7 @@ function viewPastEvents(){
   archiveSweep().catch(console.warn);
   const app=$('#app');
   const pubs=getPublicRoleKeys();
+
   const cards=(ARCHIVE||[]).map(a=>{
     const capHtml=pubs.map(r=>{
       const list=a.signups?.[r]||[];
@@ -577,6 +620,18 @@ function viewPastEvents(){
       }).join(' ');
       return `<li><b>${roleLabel(r)}</b>: ${list.length}/${(a.capacity?.[r]||0)} — ${names||'—'}</li>`;
     }).join('');
+
+    const publicBoxes = `
+      <div class="grid2" style="margin-top:8px">
+        <div class="pub-box small">
+          <b>Technika</b>
+          <div class="prewrap" style="margin-top:4px">${h(a.tech)||'<span class="muted">—</span>'}</div>
+        </div>
+        <div class="pub-box small">
+          <b>Poznámka</b>
+          <div class="prewrap" style="margin-top:4px">${h(a.notePublic)||'<span class="muted">—</span>'}</div>
+        </div>
+      </div>`;
 
     const adminAssign = isPrivileged()? `
       <div class="admin-box small" style="margin-top:8px">
@@ -607,7 +662,7 @@ function viewPastEvents(){
         </div>
         <div style="margin-top:6px">
           <label>Poznámka pro adminy</label>
-          <textarea id="anote_${a.id}" class="textarea" placeholder="Interní poznámka...">${a.adminNote||''}</textarea>
+          <textarea id="anote_${a.id}" class="textarea" placeholder="Interní poznámka...">${h(a.adminNote||'')}</textarea>
           <div class="row" style="justify-content:flex-end;margin-top:6px">
             <button class="btn" type="button" onclick="saveEventNote('${a.id}', document.getElementById('anote_${a.id}').value)">Uložit pozn.</button>
           </div>
@@ -632,6 +687,7 @@ function viewPastEvents(){
       <div class="muted">${a.date} • ${a.location||'—'} • ${(a.timeFrom||'')}${a.timeTo?('–'+a.timeTo):''}</div>
       ${adminControls}
       <ul class="list-plain" style="margin-top:8px">${capHtml}</ul>
+      ${publicBoxes}
       ${adminAssign}
       ${adminFinance}
       <details style="margin-top:10px">
@@ -648,14 +704,8 @@ function viewPastEvents(){
 /* ===== Členové ===== */
 async function toggleUserRole(uid, roleKey, on){
   const u=getUserById(uid); if(!u) return;
-
-  // admin roli smí měnit pouze Podpora
-  if (roleKey==='admin' && !isSupportUser(ME)) return;
-
-  // roli Podpora nelze přiřazovat ani odebírat nikomu
-  if (roleKey==='support') return;
-
-  // non-support nesmí manipulovat s uživatelem, který je Podpora
+  if (roleKey==='admin' && !isSupportUser(ME)) return;   // admin roli mění jen Podpora
+  if (roleKey==='support') return;                        // support se nepřiřazuje
   if(!isSupportUser(ME) && userHasRole(u,'support')) return;
 
   u.roles=u.roles||[];
@@ -687,13 +737,8 @@ async function toggleActive(uid){
 }
 async function deleteUser(uid){
   const u=getUserById(uid); if(!u) return;
-
-  // uživatele s rolí admin nelze smazat (ani Podporou)
   if (userHasRole(u,'admin')) { alert('Uživatele s rolí „admin“ nelze smazat.'); return; }
-
-  // non-support nesmí mazat podporu
   if(!isSupportUser(ME) && userHasRole(u,'support')) return;
-
   if(!confirm('Opravdu smazat uživatele?')) return;
   USERS=USERS.filter(x=>x.id!==uid);
   await kvSave(DB_USERS, USERS);
@@ -815,9 +860,6 @@ function viewRoles(){
   const app=$('#app');
 
   const list=ROLES.filter(canSeeRoleObj).map(r=>{
-    // Práva na tlačítka:
-    // - „Upravit“: jen Podpora může u role "admin"
-    // - „Smazat“ : jen Podpora může u role "admin"
     const canEdit   = isSupportUser(ME) ? true : (r.key !== 'admin');
     const canDelete = isSupportUser(ME) ? true : (r.key !== 'admin');
 
@@ -847,14 +889,11 @@ function viewRoles(){
 }
 function editRoleOpen(key){
   if(!canSeeRoleKey(key)) { viewRoles(); return; }
-
-  // ❗ Admin nesmí upravovat roli "admin" – může pouze Podpora
   if (key === 'admin' && !isSupportUser(ME)) {
     alert('Roli „admin“ může upravovat pouze Podpora.');
     viewRoles();
     return;
   }
-
   const r=ROLES.find(x=>x.key===key); if(!r) return;
   const app=$('#app');
   app.innerHTML=`
@@ -872,14 +911,11 @@ function editRoleOpen(key){
 async function saveRole(){
   const key=document.getElementById('er_key').value;
   if(!canSeeRoleKey(key)) { viewRoles(); return; }
-
-  // ❗ Admin nesmí ukládat změny role "admin"
   if (key === 'admin' && !isSupportUser(ME)) {
     alert('Roli „admin“ může upravovat pouze Podpora.');
     viewRoles();
     return;
   }
-
   const label=document.getElementById('er_label').value.trim();
   const pub=document.getElementById('er_pub').checked;
   const r=ROLES.find(x=>x.key===key); if(!r) return;
@@ -890,13 +926,10 @@ async function saveRole(){
 }
 async function deleteRole(key){
   if(!canSeeRoleKey(key)) { viewRoles(); return; }
-
-  // ❗ BEZPEČNOST: roli "admin" může smazat pouze Podpora
   if (key === 'admin' && !isSupportUser(ME)) {
     alert('Roli „admin“ může mazat pouze Podpora.');
     return;
   }
-
   if(!confirm('Smazat roli?')) return;
   ROLES=ROLES.filter(r=>r.key!==key);
   USERS=USERS.map(u=>({ ...u, roles:(u.roles||[]).filter(rk=>rk!==key) }));
@@ -988,7 +1021,9 @@ window.editRoleOpen=editRoleOpen;
 window.saveRole=saveRole;
 window.deleteRole=deleteRole;
 window.addRole=addRole;
+
 window.downloadJson = downloadJson;
+
 function logout(){
   localStorage.removeItem(DB_SESSION);
   ME=null; ACTIVE_ROLE=null;
