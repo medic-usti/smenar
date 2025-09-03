@@ -569,7 +569,13 @@ window.viewActivity=viewActivity;
 window.viewExport=viewExport;
 window.joinEvent=joinEvent;
 window.leaveEvent=leaveEvent;
-window.logout=function(){ localStorage.removeItem(DB_SESSION); ME=null; ACTIVE_ROLE=null; renderHeader(); viewLogin(); };
+function logout(){
+  localStorage.removeItem(DB_SESSION);
+  ME=null; ACTIVE_ROLE=null;
+  renderHeader();
+  viewLogin();
+}
+window.logout = logout;
 window.toggleActive=toggleActive;
 window.deleteUser=deleteUser;
 window.addUser=addUser;
