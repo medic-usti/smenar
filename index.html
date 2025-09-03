@@ -135,7 +135,7 @@ function renderHeader(){
         <div class="menu" id="adminMenu">
           <button class="btn" id="adminBtn" type="button">Admin ▾</button>
           <div class="dropdown">
-            <button type="button" onclick="viewEvents()">Události</button>
+            <button type="button" onclick="">Události</button>
             <button type="button" onclick="viewPastEvents()">Proběhlé akce</button>
             <button type="button" onclick="viewMembers()">Členové</button>
             <button type="button" onclick="viewRoles()">Role</button>
@@ -238,6 +238,26 @@ function viewEvents(){
   }).join('');
   app.innerHTML=`<h3>Události</h3>${cards || '<div class="card muted">Žádné události.</div>'}`;
 }
+function viewPastEvents(){
+  CURRENT_VIEW='past';
+  try{ archiveSweep(); }catch(e){ console.warn('archiveSweep error', e); }
+  const app=$('#app');
+  const pubs=getPublicRoleKeys();
+  const cards=(load(DB_ARCHIVE)||[]).map(a=>{
+    const capHtml=pubs.map(r=>{
+      const list=a.signups?.[r]||[];
+      const names=list.map(id=>(getUserById(id)||{}).name).filter(Boolean).join(', ');
+      return `<li><b>${roleLabel(r)}</b>: ${list.length}/${(a.capacity?.[r]||0)} — ${names||'—'}</li>`;
+    }).join('');
+    return `<div class="card">
+      <div style="font-weight:700">${a.title}</div>
+      <div class="muted">${a.date} • ${a.location||'—'} • ${(a.timeFrom||'')}${a.timeTo?('–'+a.timeTo):''}</div>
+      <ul class="list-plain" style="margin-top:8px">${capHtml}</ul>
+    </div>`;
+  }).join('');
+  app.innerHTML=`<h3>Proběhlé akce</h3>${cards || '<div class="card muted">Žádné záznamy.</div>'}`;
+}
+
 
 /* ===== Join/Leave, Delete ===== */
 function inRoleCapacity(a, roleKey){ const cap=(a.capacity?.[roleKey]||0); const list=a.signups?.[roleKey]||[]; return list.length<cap; }
