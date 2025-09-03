@@ -258,10 +258,19 @@ function renderHeader(){
   ensureActiveRole();
   const prs=userPublicRoles(ME);
   const roleSel=(ACTIVE_ROLE && prs.length)?`<select class="select" id="selActiveRole">${prs.map(r=>`<option value="${r}" ${r===ACTIVE_ROLE?'selected':''}>${roleLabel(r)}</option>`).join('')}</select>`:`<span class="muted">Bez veřejné role</span>`;
+
+  // ➕ Přidáno: navigace pro všechny (Události / Proběhlé)
+  const publicNav = `
+    <div class="row">
+      <button class="btn" type="button" onclick="viewEvents()">Události</button>
+      <button class="btn" type="button" onclick="viewPastEvents()">Proběhlé</button>
+    </div>`;
+
   el.innerHTML=`
     <div class="row">
       <span class="badge">${ME.name}</span>
       ${roleSel}
+      ${publicNav}
       ${isPrivileged()? `
         <div class="menu" id="adminMenu">
           <button class="btn" id="adminBtn" type="button">Admin ▾</button>
@@ -531,7 +540,7 @@ function viewEvents(){
       <div class="admin-box small" style="margin-top:8px">
         <b>Ruční přiřazení:</b>
         <div class="grid3" style="margin-top:6px">
-          ${pubs.map(r=>{
+          ${getPublicRoleKeys().map(r=>{
             const opts=candidatesForRole(r,a).map(u=>`<option value="${u.id}">${u.name}</option>`).join('');
             const disabled = opts? '' : 'disabled';
             const selId = `sel_${a.id}_${r}`;
