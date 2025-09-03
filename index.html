@@ -175,23 +175,31 @@ function viewCreateEvent(editId){
   $('#app').innerHTML=`<h3>${a?'Upravit událost':'Nová událost'}</h3>
     <div class="card">
       <div class="grid3">
-        <input id="evTitle" class="input" placeholder="Název" value="${a?a.title:''}">
-        <input id="evLocation" class="input" placeholder="Místo" value="${a?a.location:''}">
-        <input id="evDate" class="input" type="date" value="${a?(a.date||today()):today()}">
+        <input id="evTitle" class="input" placeholder="Název" value="${a?vals.title:""}">
+        <input id="evLocation" class="input" placeholder="Místo" value="${a?vals.location:""}">
+        <input id="evDate" class="input" type="date" value="${a?(vals.date||today()):today()}">
       </div>
-      <div class="grid3" style="margin-top:8px">
-        <input id="evFrom" class="input" type="time" value="${a?(a.timeFrom||''):''}">
-        <input id="evTo"   class="input" type="time" value="${a?(a.timeTo  ||''):''}">
+	  <div class="grid3" style="margin-top:8px">
+		<input id="evTitle" class="input" placeholder="Počet aut" value="${a?vals.title:""}">
+		<input id="evTitle" class="input" placeholder="Poznámka" value="${a?vals.title:""}">
+		</div>
+      <div class="grid3" style="margin-top:8px">Čas od - do</div>
+        <input id="evFrom" class="input" type="time" value="${a?(vals.timeFrom||"" ): ""}">
+        <input id="evTo" class="input" type="time" value="${a?(vals.timeTo||"" ): ""}">
+	  <div class="grid3" style="margin-top:8px">Odemknutí přihlášení od</div>
         <input id="evUnlock" class="input" type="datetime-local" value="${toLocalDTVal(unlockVal)}" placeholder="Odemknutí přihlašování">
-      </div>
-      <div class="grid3" style="margin-top:8px">
-        ${pubs.map(r=>`<div><div class="muted" style="font-size:12px">${roleLabel(r)}</div><input id="cap_${r}" class="input" type="number" min="0" value="${a?(a.capacity?.[r]||0):0}"></div>`).join('')}
+	  <div class="grid3" style="margin-top:8px">
+        ${pubs.map(r=>`
+          <div>
+            <div class="muted" style="font-size:12px">${roleLabel(r)}</div>
+            <input id="cap_${r}" class="input" type="number" min="0" value="${a?(vals.capacity&&vals.capacity[r]||0):0}">
+          </div>`).join("")}
       </div>
       <div class="row" style="justify-content:flex-end;margin-top:12px">
-        <button class="btn" onclick="exitCreateView()">Zpět</button>
+        <button class="btn" onclick="viewEvents()">Zpět</button>
         <button class="btn primary" onclick="${a?`saveEvent('${a.id}')`:`saveEvent(null)`}">Uložit</button>
       </div>
-      <div class="muted" style="margin-top:6px;font-size:12px;color:red">NEZAPOMEŇ NA POČTY ČLENŮ.</div>
+	  <div class="muted" style="margin-top:6px;font-size:12px;color:red">NEZAPOMEŇ NA POČTY ČLENŮ.</div>
     </div>`;
 }
 function exitCreateView(){
