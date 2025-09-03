@@ -73,7 +73,7 @@
   <script type="module">
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
 
-/* ====== Supabase přístupy (tvé) ====== */
+/* ====== Supabase přístupy ====== */
 const SUPABASE_URL = "https://lqpyavwhzpvdbxdidfry.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxxcHlhdndoenB2ZGJ4ZGlkZnJ5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTY4NDQxNzYsImV4cCI6MjA3MjQyMDE3Nn0.baWqIwQrlz8KJ6CfOt7-md7FZvBDSXagFXNpHy_eOH4";
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -114,11 +114,15 @@ async function kvSave(key, value){
   DB_ONLINE = true; DB_LAST_TS = Date.now(); DB_LAST_SRC='save';
 }
 
-/* ====== Realtime odběr ====== */
+/* ====== Realtime odběr + watchdog ====== */
+let _lastRealtime = Date.now();
 function subscribeRealtime(){
   supabase
     .channel('kv-realtime')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'kv' }, (payload) => {
+    .on('postgres_changes', {
+      event: '*', schema: 'public', table: 'kv',
+      filter: "key=in.(users,roles,actions,archive,activity)"
+    }, (payload) => {
       const row = payload.new || payload.old;
       if(!row?.key) return;
       if(CURRENT_VIEW==='create' || CURRENT_VIEW==='login') return; // pauza, ať se nepřepíše formulář
@@ -132,17 +136,27 @@ function subscribeRealtime(){
         case DB_ACTIVITY:ACTIVITY = arr; break;
       }
       DB_ONLINE = true; DB_LAST_TS = Date.now(); DB_LAST_SRC='realtime';
+      _lastRealtime = Date.now();
       renderApp();
     })
     .subscribe(status => {
       DB_ONLINE = (status === 'SUBSCRIBED'); DB_LAST_TS = Date.now(); DB_LAST_SRC='sub';
+      _lastRealtime = Date.now();
     });
+
+  // Watchdog: pokud 5 minut nic nepřišlo, udělej 1× refresh (mimo login/create)
+  setInterval(()=>{
+    const FIVE_MIN = 5*60*1000;
+    if (Date.now() - _lastRealtime > FIVE_MIN && CURRENT_VIEW!=='login' && CURRENT_VIEW!=='create'){
+      refreshFromDB().catch(()=>{});
+      _lastRealtime = Date.now();
+    }
+  }, 60*1000);
 }
 
-/* ====== 30s auto-refresh (polling) — mimo login a create ====== */
+/* ====== Jednorázový refresh (fallback jen při watchdogu) ====== */
 const _eq = (a,b)=>JSON.stringify(a)===JSON.stringify(b);
 async function refreshFromDB(){
-  if (CURRENT_VIEW === 'login' || CURRENT_VIEW === 'create') return;
   try{
     const [u, r, a, ar, ac] = await Promise.all([
       kvLoad(DB_USERS), kvLoad(DB_ROLES), kvLoad(DB_ACTIONS), kvLoad(DB_ARCHIVE), kvLoad(DB_ACTIVITY)
@@ -153,14 +167,12 @@ async function refreshFromDB(){
     if(!_eq(ACTIONS,a)) { ACTIONS=a; changed=true; }
     if(!_eq(ARCHIVE,ar)){ ARCHIVE=ar;changed=true; }
     if(!_eq(ACTIVITY,ac)){ACTIVITY=ac;changed=true; }
-    if(changed){ DB_ONLINE=true; DB_LAST_TS=Date.now(); DB_LAST_SRC='poll'; renderApp(); }
+    if(changed){ DB_ONLINE=true; DB_LAST_TS=Date.now(); DB_LAST_SRC='fallback'; renderApp(); }
   }catch(err){
-    console.warn('poll error', err);
-    DB_ONLINE=false; DB_LAST_TS=Date.now(); DB_LAST_SRC='poll-error';
+    console.warn('fallback refresh error', err);
+    DB_ONLINE=false; DB_LAST_TS=Date.now(); DB_LAST_SRC='fallback-error';
   }
 }
-const POLL_MS = 30000;
-setInterval(refreshFromDB, POLL_MS);
 
 /* ====== Seed & Init ====== */
 async function seedIfEmpty(){
@@ -186,7 +198,6 @@ async function init(){
     await seedIfEmpty();
     subscribeRealtime();
     renderApp();
-    refreshFromDB(); // okamžitý první pull
   }catch(e){
     showErr('Chyba připojení k DB: '+(e.message||e));
     DB_ONLINE=false; DB_LAST_TS=Date.now(); DB_LAST_SRC='error';
@@ -880,6 +891,13 @@ window.removeMember=removeMember;
 window.setEventPaid=setEventPaid;
 window.saveEventNote=saveEventNote;
 window.deleteEvent=deleteEvent;
+/* ✅ doplněné exporty pro členy */
+window.deleteUser=deleteUser;
+window.addUser=addUser;
+window.toggleUserRole=toggleUserRole;
+window.saveUserInline=saveUserInline;
+window.toggleActive=toggleActive;
+
 function logout(){
   localStorage.removeItem(DB_SESSION);
   ME=null; ACTIVE_ROLE=null;
