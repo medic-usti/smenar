@@ -45,7 +45,7 @@
     .db-muted{color:#cbd5e1}
     .event-mine{border-color:#10b981 !important;box-shadow:0 8px 30px rgba(16,185,129,.25)}
     .mine-pill{background:#ecfdf5;border-color:#10b981;color:#065f46;font-weight:600}
-    #err {position:fixed;left:12px;right:12px;bottom:68px;z-index:70;background:#fee2e2;color:#7f1d1d;border:1px solid #fecaca;border-radius:10px;padding:8px 10px;font-size:12px;display:none}
+    #err {position:fixed;left:12px;right:12px;bottom:68px;z-index:70;background:#fee2e2;color:#7f1d1d;border:1px solid #fecaca;border-radius:10px;padding:8px 10px;display:none}
     .chip{display:inline-flex;align-items:center;border:1px solid var(--border);border-radius:999px;padding:2px 8px;margin:2px 4px;background:#fff}
     .chip .x{border:0;background:transparent;cursor:pointer;font-weight:700}
     .small{font-size:12px}
@@ -177,7 +177,16 @@ async function refreshFromDB(){
 /* ====== Seed & Init ====== */
 async function seedIfEmpty(){
   let changed=false;
-  if(!ROLES.length){ ROLES=[{key:'ridic',label:'Řidič',isPublic:true},{key:'zza',label:'ZZA',isPublic:true},{key:'zdravotnik',label:'Zdravotník',isPublic:true},{key:'support',label:'Podpora',isPublic:false}]; await kvSave(DB_ROLES, ROLES); changed=true; }
+  if(!ROLES.length){
+    ROLES=[
+      {key:'ridic',label:'Řidič',isPublic:true},
+      {key:'zza',label:'ZZA',isPublic:true},
+      {key:'zdravotnik',label:'Zdravotník',isPublic:true},
+      {key:'admin',label:'Admin',isPublic:false},
+      {key:'support',label:'Podpora',isPublic:false}
+    ];
+    await kvSave(DB_ROLES, ROLES); changed=true;
+  }
   if(!USERS.length){ USERS=[
     {id:'u1',name:'Podpora',password:'support',roles:['support','admin'],isActive:true},
     {id:'u2',name:'admin',password:'1111',roles:['admin'],isActive:true},
@@ -189,6 +198,23 @@ async function seedIfEmpty(){
   if(!ACTIVITY.length){ await kvSave(DB_ACTIVITY,[]); changed=true; }
   if(changed){ DB_LAST_SRC='seed'; DB_LAST_TS=Date.now(); }
 }
+
+/* Doplní chybějící klíčové role i na existujících datech */
+async function ensureCoreRoles() {
+  const must = [
+    {key:'admin',label:'Admin',isPublic:false},
+    {key:'support',label:'Podpora',isPublic:false},
+    {key:'ridic',label:'Řidič',isPublic:true},
+    {key:'zza',label:'ZZA',isPublic:true},
+    {key:'zdravotnik',label:'Zdravotník',isPublic:true}
+  ];
+  let changed = false;
+  for (const r of must) {
+    if (!ROLES.find(x=>x.key===r.key)) { ROLES.push(r); changed=true; }
+  }
+  if (changed) await kvSave(DB_ROLES, ROLES);
+}
+
 async function init(){
   try{
     [USERS, ROLES, ACTIONS, ARCHIVE, ACTIVITY] = await Promise.all([
@@ -196,6 +222,7 @@ async function init(){
     ]);
     DB_ONLINE=true; DB_LAST_TS=Date.now(); DB_LAST_SRC='init';
     await seedIfEmpty();
+    await ensureCoreRoles();          // ✅ doplnit role, pokud chybí
     subscribeRealtime();
     renderApp();
   }catch(e){
@@ -891,19 +918,19 @@ window.removeMember=removeMember;
 window.setEventPaid=setEventPaid;
 window.saveEventNote=saveEventNote;
 window.deleteEvent=deleteEvent;
-/* ✅ doplněné exporty pro členy */
+
 window.deleteUser=deleteUser;
 window.addUser=addUser;
 window.toggleUserRole=toggleUserRole;
 window.saveUserInline=saveUserInline;
 window.toggleActive=toggleActive;
 
+// ✅ funkce pro Role (aby volání z UI fungovalo)
 window.editRoleOpen=editRoleOpen;
 window.saveRole=saveRole;
 window.deleteRole=deleteRole;
 window.addRole=addRole;
 
-    
 function logout(){
   localStorage.removeItem(DB_SESSION);
   ME=null; ACTIVE_ROLE=null;
