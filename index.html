@@ -815,15 +815,19 @@ function viewMembers(){
 function viewRoles(){
   CURRENT_VIEW='roles';
   const app=$('#app');
-  const list=ROLES.filter(canSeeRoleObj).map(r=>`
-    <div class="card">
-      <b>${r.label}</b> <span class="muted">(${r.key})</span> • ${r.isPublic?'veřejná':'neveřejná'}
-      ${isPrivileged()?`
-      <div class="row" style="margin-top:6px">
-        <button class="btn" type="button" onclick="editRoleOpen('${r.key}')">Upravit</button>
-        <button class="btn danger" type="button" onclick="deleteRole('${r.key}')">Smazat</button>
-      </div>`:''}
-    </div>`).join('');
+  const list=ROLES.filter(canSeeRoleObj).map(r=>{
+    // admin roli lze mazat jen Podporou
+    const canDelete = (r.key !== 'admin') || isSupportUser(ME);
+    return `
+      <div class="card">
+        <b>${r.label}</b> <span class="muted">(${r.key})</span> • ${r.isPublic?'veřejná':'neveřejná'}
+        ${isPrivileged()?`
+        <div class="row" style="margin-top:6px">
+          <button class="btn" type="button" onclick="editRoleOpen('${r.key}')">Upravit</button>
+          ${canDelete ? `<button class="btn danger" type="button" onclick="deleteRole('${r.key}')">Smazat</button>` : ``}
+        </div>`:''}
+      </div>`;
+  }).join('');
   const addBox = isPrivileged()?`
     <div class="card" style="margin-top:12px">
       <h4>Nová role</h4>
@@ -865,6 +869,13 @@ async function saveRole(){
 }
 async function deleteRole(key){
   if(!canSeeRoleKey(key)) { viewRoles(); return; }
+
+  // ❗ roli "admin" může mazat pouze Podpora
+  if (key === 'admin' && !isSupportUser(ME)) {
+    alert('Roli „admin“ může mazat pouze Podpora.');
+    return;
+  }
+
   if(!confirm('Smazat roli?')) return;
   ROLES=ROLES.filter(r=>r.key!==key);
   USERS=USERS.map(u=>({ ...u, roles:(u.roles||[]).filter(rk=>rk!==key) }));
