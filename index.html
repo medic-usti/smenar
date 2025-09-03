@@ -31,6 +31,8 @@
     .pill{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:999px;padding:6px 10px;background:#fff}
     .list-plain{margin:0;padding-left:1rem}
     .list-plain li{margin:2px 0}
+    details summary{cursor:pointer; user-select:none; list-style:none}
+    details summary::-webkit-details-marker{display:none}
     .admin-box{border:1px dashed var(--border); border-radius:10px; padding:10px; margin-top:10px; background:#fafbff}
     .key{font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; font-size:12px; padding:2px 6px; border:1px solid var(--border); border-radius:6px; background:#fff}
     .toast-wrap{position:fixed;right:16px;bottom:16px;display:flex;flex-direction:column;gap:8px;z-index:50}
@@ -53,7 +55,7 @@
 <body>
   <div id="dbInd" class="db-ind" title="Stav databáze">
     <span id="dbDot" class="db-dot"></span>
-    <span><b>DB:</b> <span id="dbState">Offline</span></span>
+    <span><b>DB:</b> <span id="dbState">Online</span></span>
     <span class="db-muted">•</span>
     <span class="db-muted">naposledy: <span id="dbLast">—</span></span>
   </div>
@@ -148,7 +150,7 @@ function historyForEvent(eid, limit=20){
 }
 
 /* === pomoc: update eventu v aktivních i v archivu === */
-function updateEventBoth(aid, updater, log){
+function updateEventBoth(aid, updater, onLogged){
   let changed = false;
   ACTIONS=load(DB_ACTIONS);
   const a=ACTIONS.find(x=>x.id===aid);
@@ -158,7 +160,7 @@ function updateEventBoth(aid, updater, log){
   if(p){ updater(p); save(DB_ARCHIVE,ARCHIVE); changed=true; }
   if(changed){
     DB_LAST_TS=Date.now(); DB_LAST_SRC='save';
-    if(typeof log==='function') log();
+    if(typeof onLogged==='function') onLogged(a||p);
     renderApp();
   }
 }
@@ -225,7 +227,7 @@ function getUnlockMs(a){ if(!a||!a.signupUnlock) return 0; const ms=new Date(a.s
 function sortEvents(a,b){ const A=(a.date||'')+' '+(a.timeFrom||'00:00'); const B=(b.date||'')+' '+(b.timeFrom||'00:00'); return A.localeCompare(B); }
 function archiveSweep(){ let acts=load(DB_ACTIONS); let arc=load(DB_ARCHIVE); const toMove=(acts||[]).filter(isPastEvent); if(!toMove.length) return; const keep=acts.filter(a=>!isPastEvent(a)); ACTIONS=keep; save(DB_ACTIONS,ACTIONS); const moved=toMove.slice().sort(sortEvents).reverse(); arc=[...moved,...arc]; ARCHIVE=arc; save(DB_ARCHIVE,arc); }
 
-/* === admin/podpora: přiřazení/odebrání členů na událost === */
+/* === admin/podpora: přiřazení/odebrání členů (aktivní i archiv) === */
 function candidatesForRole(roleKey, a){
   return load(DB_USERS)
     .filter(u=>u.isActive!==false)
@@ -233,14 +235,26 @@ function candidatesForRole(roleKey, a){
     .filter(u=>userHasRole(u, roleKey))
     .filter(u=>!(a.signups?.[roleKey]||[]).includes(u.id));
 }
+function _findEventById(aid){
+  ACTIONS=load(DB_ACTIONS);
+  let container='actions';
+  let a=ACTIONS.find(x=>x.id===aid);
+  if(!a){
+    ARCHIVE=load(DB_ARCHIVE);
+    a=ARCHIVE.find(x=>x.id===aid);
+    container='archive';
+  }
+  return {a,container};
+}
 function assignMember(aid, roleKey, uid){
   if(!isPrivileged()) return;
-  ACTIONS=load(DB_ACTIONS);
-  const a=ACTIONS.find(x=>x.id===aid); if(!a) return;
+  const {a,container}=_findEventById(aid);
+  if(!a) return;
   a.signups[roleKey]=a.signups[roleKey]||[];
   if(!a.signups[roleKey].includes(uid)){
     a.signups[roleKey].push(uid);
-    save(DB_ACTIONS,ACTIONS);
+    if(container==='actions'){ save(DB_ACTIONS,load(DB_ACTIONS)); }
+    else { ARCHIVE=load(DB_ARCHIVE); const idx=ARCHIVE.findIndex(x=>x.id===aid); ARCHIVE[idx]=a; save(DB_ARCHIVE,ARCHIVE); }
     const u=getUserById(uid);
     toast('Přiřazen člen', `${u?.name||uid} → ${roleLabel(roleKey)}`);
     logActivity('assign', a.id, a.title, `${u?.name||uid} (${roleLabel(roleKey)})`);
@@ -249,10 +263,11 @@ function assignMember(aid, roleKey, uid){
 }
 function removeMember(aid, roleKey, uid){
   if(!isPrivileged()) return;
-  ACTIONS=load(DB_ACTIONS);
-  const a=ACTIONS.find(x=>x.id===aid); if(!a) return;
+  const {a,container}=_findEventById(aid);
+  if(!a) return;
   a.signups[roleKey]=(a.signups[roleKey]||[]).filter(x=>x!==uid);
-  save(DB_ACTIONS,ACTIONS);
+  if(container==='actions'){ save(DB_ACTIONS,load(DB_ACTIONS)); }
+  else { ARCHIVE=load(DB_ARCHIVE); const idx=ARCHIVE.findIndex(x=>x.id===aid); ARCHIVE[idx]=a; save(DB_ARCHIVE,ARCHIVE); }
   const u=getUserById(uid);
   toast('Odebrán člen', `${u?.name||uid} z ${roleLabel(roleKey)}`);
   logActivity('unassign', a.id, a.title, `${u?.name||uid} (${roleLabel(roleKey)})`);
@@ -262,12 +277,12 @@ function removeMember(aid, roleKey, uid){
 /* === admin: poznámka + zaplaceno (aktualizace i v archivu) === */
 function setEventPaid(aid, paid){
   if(!isPrivileged()) return;
-  updateEventBoth(aid, (ev)=>{ ev.isPaid=!!paid; }, ()=>logActivity('paid', aid, (load(DB_ACTIONS).find(x=>x.id===aid)||{}).title, paid?'1':'0'));
+  updateEventBoth(aid, (ev)=>{ ev.isPaid=!!paid; }, (ev)=>logActivity('paid', aid, ev?.title, paid?'1':'0'));
   toast(paid?'Označeno jako zaplaceno':'Zrušeno zaplaceno');
 }
 function saveEventNote(aid, text){
   if(!isPrivileged()) return;
-  updateEventBoth(aid, (ev)=>{ ev.adminNote=(text||''); }, ()=>logActivity('note', aid, (load(DB_ACTIONS).find(x=>x.id===aid)||{}).title, (text||'').slice(0,120)));
+  updateEventBoth(aid, (ev)=>{ ev.adminNote=(text||''); }, (ev)=>logActivity('note', aid, ev?.title, (text||'').slice(0,120)));
   toast('Poznámka uložena');
 }
 
@@ -278,6 +293,7 @@ function isMeSignedInEvent(a){
   return false;
 }
 
+/* ===== Události (aktuální) ===== */
 function viewEvents(){
   CURRENT_VIEW='events';
   try{ archiveSweep(); }catch(e){ console.warn('archiveSweep error', e); }
@@ -311,7 +327,6 @@ function viewEvents(){
     const mine=isMeSignedInEvent(a);
     const minePill = mine ? `<span class="pill mine-pill">✔ Přihlášen</span>` : '';
 
-    /* ADMIN assign UI */
     const adminAssign = isPrivileged()? `
       <div class="admin-box small" style="margin-top:8px">
         <b>Ruční přiřazení:</b>
@@ -331,7 +346,6 @@ function viewEvents(){
         </div>
       </div>` : '';
 
-    /* ADMIN finance/poznámka */
     const adminFinance = isPrivileged()? `
       <div class="admin-box small" style="margin-top:8px">
         <div class="row">
@@ -346,7 +360,7 @@ function viewEvents(){
           <div class="row" style="justify-content:flex-end;margin-top:6px">
             <button class="btn" type="button" onclick="saveEventNote('${a.id}', document.getElementById('note_${a.id}').value)">Uložit pozn.</button>
           </div>
-          <div class="muted small">Uloží se i do „Proběhlých“ (při přesunu nebo pokud už je v archivu).</div>
+          <div class="muted small">Uloží se i do „Proběhlých“.</div>
         </div>
       </div>` : '';
 
@@ -388,6 +402,7 @@ function viewEvents(){
   app.innerHTML=`<h3>Události</h3>${cards || '<div class="card muted">Žádné události.</div>'}`;
 }
 
+/* ===== Proběhlé akce (editovatelné) ===== */
 function viewPastEvents(){
   CURRENT_VIEW='past';
   try{ archiveSweep(); }catch(e){ console.warn('archiveSweep error', e); }
@@ -396,26 +411,69 @@ function viewPastEvents(){
   const cards=(load(DB_ARCHIVE)||[]).map(a=>{
     const capHtml=pubs.map(r=>{
       const list=a.signups?.[r]||[];
-      const names=list.map(id=>(getUserById(id)||{}).name).filter(Boolean).join(', ');
+      const names=list.map(id=>{
+        const u=getUserById(id)||{};
+        const rm = isPrivileged()? ` <button class="x" title="Odebrat" onclick="removeMember('${a.id}','${r}','${id}')">×</button>` : '';
+        return `<span class="chip">${u.name||id}${rm}</span>`;
+      }).join(' ');
       return `<li><b>${roleLabel(r)}</b>: ${list.length}/${(a.capacity?.[r]||0)} — ${names||'—'}</li>`;
     }).join('');
+
+    const adminAssign = isPrivileged()? `
+      <div class="admin-box small" style="margin-top:8px">
+        <b>Ruční přiřazení (archiv):</b>
+        <div class="grid3" style="margin-top:6px">
+          ${pubs.map(r=>{
+            const opts=candidatesForRole(r,a).map(u=>`<option value="${u.id}">${u.name}</option>`).join('');
+            const disabled = opts? '' : 'disabled';
+            const selId = `asel_${a.id}_${r}`;
+            return `<div>
+                <label>${roleLabel(r)}</label>
+                <div class="row" style="margin-top:4px">
+                  <select id="${selId}" class="select">${opts||'<option>—</option>'}</select>
+                  <button class="btn" ${disabled} type="button" onclick="(function(){ const v=document.getElementById('${selId}').value; if(v) assignMember('${a.id}','${r}',v); })()">Přidat</button>
+                </div>
+              </div>`;
+          }).join('')}
+        </div>
+      </div>` : '';
+
+    const adminFinance = isPrivileged()? `
+      <div class="admin-box small" style="margin-top:8px">
+        <div class="row">
+          <label class="row" style="gap:6px">
+            <input type="checkbox" ${a.isPaid?'checked':''} onchange="setEventPaid('${a.id}', this.checked)"> Zaplaceno
+          </label>
+          ${a.isPaid?'<span class="badge paid">Zaplaceno</span>':''}
+        </div>
+        <div style="margin-top:6px">
+          <label>Poznámka pro adminy</label>
+          <textarea id="anote_${a.id}" class="textarea" placeholder="Interní poznámka...">${a.adminNote||''}</textarea>
+          <div class="row" style="justify-content:flex-end;margin-top:6px">
+            <button class="btn" type="button" onclick="saveEventNote('${a.id}', document.getElementById('anote_${a.id}').value)">Uložit pozn.</button>
+          </div>
+        </div>
+      </div>` : '';
+
     const hist = historyForEvent(a.id, 20).map(h=>{
       const at=new Date(h.ts).toLocaleString();
       const who = h.userName || h.userId || 'uživatel';
       const det = h.detail? ` — <span class="muted">${h.detail}</span>` : '';
       return `<li>${at}: <b>${who}</b> — ${h.type}${det}</li>`;
     }).join('') || '<li class="muted">Žádné záznamy.</li>';
-    const adminInfo = isPrivileged()? `
-      <div class="row" style="gap:8px;margin-top:6px">
-        ${a.isPaid?'<span class="badge paid">Zaplaceno</span>':''}
-        ${(a.adminNote||'').trim()?`<span class="badge">Pozn.: ${(a.adminNote||'').trim()}</span>`:''}
+
+    const adminControls = isPrivileged()? `
+      <div class="row" style="margin-top:6px">
+        <button class="btn" type="button" onclick="editEvent('${a.id}')">Upravit</button>
       </div>` : '';
 
     return `<div class="card">
       <div style="font-weight:700">${a.title} ${a.isPaid?'<span class="badge paid" title="Zaplaceno">Zaplaceno</span>':''}</div>
       <div class="muted">${a.date} • ${a.location||'—'} • ${(a.timeFrom||'')}${a.timeTo?('–'+a.timeTo):''}</div>
-      ${adminInfo}
+      ${adminControls}
       <ul class="list-plain" style="margin-top:8px">${capHtml}</ul>
+      ${adminAssign}
+      ${adminFinance}
       <details style="margin-top:10px">
         <summary><b>Historie akce</b></summary>
         <div class="card" style="margin-top:8px">
@@ -470,8 +528,10 @@ function viewCreateEvent(editId=null){
   if(!isPrivileged()) return;
   CURRENT_VIEW='create'; CURRENT_EDIT_ID=editId;
   const app=$('#app');
+
   ACTIONS=load(DB_ACTIONS);
-  let a = editId ? ACTIONS.find(x=>x.id===editId) : null;
+  ARCHIVE=load(DB_ARCHIVE);
+  let a = editId ? (ACTIONS.find(x=>x.id===editId) || ARCHIVE.find(x=>x.id===editId)) : null;
   if(editId && !a){ app.innerHTML='<div class="card">Událost nenalezena.</div>'; return; }
 
   const date=a?.date || today();
@@ -523,22 +583,20 @@ function saveEvent(editId){
   const pubs=getPublicRoleKeys();
   const cap={}; pubs.forEach(k=>{ const v=parseInt(document.getElementById('cap_'+k)?.value||'0',10); cap[k]=isNaN(v)?0:v; });
 
-  ACTIONS=load(DB_ACTIONS);
   if(editId){
-    const a=ACTIONS.find(x=>x.id===editId);
-    if(!a){ alert('Událost nenalezena'); return; }
-    a.date=d; a.timeFrom=f; a.timeTo=t; a.title=ti; a.location=lo; a.signupUnlock=unlock; a.capacity=cap;
-    save(DB_ACTIONS,ACTIONS);
-    toast('Událost upravena', a.title);
-    logActivity('edit', a.id, a.title);
+    updateEventBoth(editId, (ev)=>{ ev.date=d; ev.timeFrom=f; ev.timeTo=t; ev.title=ti; ev.location=lo; ev.signupUnlock=unlock; ev.capacity=cap; }, (ev)=>logActivity('edit', editId, ev?.title));
+    toast('Událost upravena', ti);
+    // Po uložení zpět na události/archiv podle času
+    isPastEvent({date:d,timeTo:t,timeFrom:f}) ? viewPastEvents() : viewEvents();
   }else{
+    ACTIONS=load(DB_ACTIONS);
     const su={}; pubs.forEach(k=> su[k]=[] );
     const a={ id: uid(), date:d, timeFrom:f, timeTo:t, title:ti, location:lo, signupUnlock:unlock, capacity:cap, signups:su, isPaid:false, adminNote:'' };
     ACTIONS.push(a); save(DB_ACTIONS,ACTIONS);
     toast('Událost vytvořena', a.title);
     logActivity('create', a.id, a.title);
+    viewEvents();
   }
-  viewEvents();
 }
 
 /* ===== Members (with password & roles management) ===== */
