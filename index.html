@@ -465,6 +465,7 @@ function viewPastEvents(){
     const adminControls = isPrivileged()? `
       <div class="row" style="margin-top:6px">
         <button class="btn" type="button" onclick="editEvent('${a.id}')">Upravit</button>
+        <button class="btn danger" type="button" onclick="deleteEvent('${a.id}')">Smazat</button>
       </div>` : '';
 
     return `<div class="card">
@@ -514,12 +515,29 @@ function leaveEvent(aid){
 function deleteEvent(aid){
   if(!isPrivileged()) return;
   if(!confirm('Smazat událost?')) return;
-  ACTIONS=load(DB_ACTIONS);
-  const a=ACTIONS.find(x=>x.id===aid);
-  ACTIONS=ACTIONS.filter(x=>x.id!==aid);
-  save(DB_ACTIONS,ACTIONS);
-  toast('Událost smazána', a?.title||'');
-  logActivity('delete', aid, a?.title||aid);
+
+  let removedTitle = '';
+
+  // Smazat z aktivních
+  ACTIONS = load(DB_ACTIONS);
+  const a = ACTIONS.find(x=>x.id===aid);
+  if(a){
+    removedTitle = a.title || removedTitle;
+    ACTIONS = ACTIONS.filter(x=>x.id!==aid);
+    save(DB_ACTIONS, ACTIONS);
+  }
+
+  // Smazat z archivu
+  ARCHIVE = load(DB_ARCHIVE);
+  const pa = ARCHIVE.find(x=>x.id===aid);
+  if(pa){
+    removedTitle = removedTitle || pa.title || '';
+    ARCHIVE = ARCHIVE.filter(x=>x.id!==aid);
+    save(DB_ARCHIVE, ARCHIVE);
+  }
+
+  toast('Událost smazána', removedTitle);
+  logActivity('delete', aid, removedTitle);
   renderApp();
 }
 
@@ -586,7 +604,6 @@ function saveEvent(editId){
   if(editId){
     updateEventBoth(editId, (ev)=>{ ev.date=d; ev.timeFrom=f; ev.timeTo=t; ev.title=ti; ev.location=lo; ev.signupUnlock=unlock; ev.capacity=cap; }, (ev)=>logActivity('edit', editId, ev?.title));
     toast('Událost upravena', ti);
-    // Po uložení zpět na události/archiv podle času
     isPastEvent({date:d,timeTo:t,timeFrom:f}) ? viewPastEvents() : viewEvents();
   }else{
     ACTIONS=load(DB_ACTIONS);
