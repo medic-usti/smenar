@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="icon" href="data:,">
   <title>Směnář - Medic Ústí nad Labem</title>
   <style>
     :root{--bg:#f7f9fc;--card:#fff;--border:#e5e7eb;--txt:#0f172a;--muted:#6b7280;--accent:#0f172a}
@@ -37,17 +38,12 @@
     .toast{background:#111827;color:#fff;border-radius:8px;padding:10px 12px;box-shadow:0 8px 24px rgba(0,0,0,.25);max-width:360px}
     .toast small{color:#cbd5e1}
     @media (max-width:640px){.grid2,.grid3{grid-template-columns:1fr} header{flex-wrap:wrap;gap:8px}}
-
     .db-ind{position:fixed;right:12px;bottom:12px;z-index:60;background:#111827;color:#fff;border-radius:10px;padding:8px 10px;font-size:12px;box-shadow:0 8px 24px rgba(0,0,0,.25);display:inline-flex;align-items:center;gap:8px;border:1px solid rgba(255,255,255,.08)}
     .db-dot{width:8px;height:8px;border-radius:999px;background:#ef4444;box-shadow:0 0 0 2px rgba(239,68,68,.25)}
     .db-dot.ok{background:#10b981;box-shadow:0 0 0 2px rgba(16,185,129,.25)}
     .db-muted{color:#cbd5e1}
-
     .event-mine{border-color:#10b981 !important;box-shadow:0 8px 30px rgba(16,185,129,.25)}
     .mine-pill{background:#ecfdf5;border-color:#10b981;color:#065f46;font-weight:600}
-<link rel="icon" href="data:,">
-
-    /* error banner */
     #err {position:fixed;left:12px;right:12px;bottom:68px;z-index:70;background:#fee2e2;color:#7f1d1d;border:1px solid #fecaca;border-radius:10px;padding:8px 10px;font-size:12px;display:none}
   </style>
 </head>
@@ -68,33 +64,25 @@
   <main><div id="app"></div></main>
   <div class="toast-wrap" id="toasts"></div>
 
-  <div id="err" style="position:fixed;left:12px;right:12px;bottom:68px;z-index:70;background:#fee2e2;color:#7f1d1d;border:1px solid #fecaca;border-radius:10px;padding:8px 10px;font-size:12px;display:none"></div>
-<script>
-(function(){
-  function showErr(msg){
-    const el=document.getElementById('err');
-    if(!el) return;
-    el.textContent=String(msg);
-    el.style.display='block';
-    console.error(msg);
-  }
-  window.addEventListener('error', e => showErr(e.message||'Neznámá chyba'));
-  window.addEventListener('unhandledrejection', e => showErr((e.reason&&e.reason.message)||e.reason||'Nezachycené odmítnutí Promise'));
-})();
-</script>
-
   <script>
-/* === Error reporting === */
+/* === Error reporting + hidden char detector === */
 (function(){
   function showErr(msg){
-    console.error(msg);
     const el=document.getElementById('err');
     if(!el) return;
     el.textContent=String(msg);
     el.style.display='block';
+    console.error(msg);
   }
   window.addEventListener('error', (e)=>{ showErr(e.message || 'Neznámá chyba'); });
   window.addEventListener('unhandledrejection', (e)=>{ showErr(e.reason?.message || e.reason || 'Nezachycené odmítnutí Promise'); });
+
+  // Highlight hidden BOM/ZWSP if present in inline scripts
+  const bad=/[\u200B\u200C\u200D\uFEFF]/g;
+  document.querySelectorAll('script').forEach((s, i)=>{
+    const m=s.textContent.match(bad);
+    if(m){ console.warn('Hidden chars in <script> #'+i, m.length); showErr('Nalezeny skryté znaky v <script> #' + i); }
+  });
 })();
 
 /* ===== Local DB + helpers ===== */
@@ -106,13 +94,13 @@ const today=()=>new Date().toISOString().slice(0,10);
 const nowMs=()=>Date.now();
 const $=s=>document.querySelector(s);
 
-function toast(msg,sub){ const w=$('#toasts'); const d=document.createElement('div'); d.className='toast'; d.innerHTML=\`<div>\${msg}</div>\${sub? \`<small>\${sub}</small>\`:''}\`; w.appendChild(d); setTimeout(()=>{ d.style.opacity='0'; d.style.transform='translateY(8px)'; d.style.transition='all .25s'; setTimeout(()=>w.removeChild(d),260); },3000); }
+function toast(msg,sub){ const w=$('#toasts'); const d=document.createElement('div'); d.className='toast'; d.innerHTML=`<div>${msg}</div>${sub? `<small>${sub}</small>`:''}`; w.appendChild(d); setTimeout(()=>{ d.style.opacity='0'; d.style.transform='translateY(8px)'; d.style.transition='all .25s'; setTimeout(()=>w.removeChild(d),260); },3000); }
 
 /* ===== DB indicator mock ===== */
 let DB_ONLINE=true, DB_LAST_TS=Date.now(), DB_LAST_SRC='init';
-function fmtAgo(ts){ if(!ts) return "—"; const s=Math.max(0,Math.floor((Date.now()-ts)/1000)); if(s<60) return \`\${s}s\`; const m=Math.floor(s/60); if(m<60) return \`\${m}m \${s%60}s\`; const h=Math.floor(m/60); return \`\${h}h \${m%60}m\`; }
+function fmtAgo(ts){ if(!ts) return "—"; const s=Math.max(0,Math.floor((Date.now()-ts)/1000)); if(s<60) return `${s}s`; const m=Math.floor(s/60); if(m<60) return `${m}m ${s%60}s`; const h=Math.floor(m/60); return `${h}h ${m%60}m`; }
 function fmtAbs(ts){ try{ return new Date(ts).toLocaleString(); }catch{ return "—"; } }
-function renderDbInd(){ const dot=$('#dbDot'), st=$('#dbState'), last=$('#dbLast'); if(!dot||!st||!last) return; st.textContent=DB_ONLINE?'Online':'Offline'; dot.classList.toggle('ok', DB_ONLINE); last.textContent=\`\${fmtAgo(DB_LAST_TS)} (\${DB_LAST_SRC})\`; const wrap=$('#dbInd'); if(wrap) wrap.title=\`DB: \${DB_ONLINE?'Online':'Offline'} • naposledy: \${fmtAbs(DB_LAST_TS)} (\${DB_LAST_SRC})\`; }
+function renderDbInd(){ const dot=$('#dbDot'), st=$('#dbState'), last=$('#dbLast'); if(!dot||!st||!last) return; st.textContent=DB_ONLINE?'Online':'Offline'; dot.classList.toggle('ok', DB_ONLINE); last.textContent=`${fmtAgo(DB_LAST_TS)} (${DB_LAST_SRC})`; const wrap=$('#dbInd'); if(wrap) wrap.title=`DB: ${DB_ONLINE?'Online':'Offline'} • naposledy: ${fmtAbs(DB_LAST_TS)} (${DB_LAST_SRC})`; }
 setInterval(renderDbInd,5000); renderDbInd();
 
 /* ===== Data state ===== */
@@ -191,10 +179,7 @@ function viewLogin(){
 }
 
 /* ===== Events / Archive ===== */
-function safeHHMM(s) {
-  return /^\d{2}:\d{2}$/.test(s||'') ? s : '';
-}
-
+function safeHHMM(s){ return /^\d{2}:\d{2}$/.test(s||'')?s:''; }
 function eventEndMs(a){ const d=a?.date||today(); const end=safeHHMM(a?.timeTo)||safeHHMM(a?.timeFrom)||'23:59'; const t=new Date(`${d}T${end}`).getTime(); return isNaN(t)?new Date(`${d}T23:59`).getTime():t; }
 function isPastEvent(a){ return nowMs()>eventEndMs(a); }
 function getUnlockMs(a){ if(!a||!a.signupUnlock) return 0; const ms=new Date(a.signupUnlock).getTime(); return isNaN(ms)?0:ms; }
