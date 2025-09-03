@@ -343,7 +343,7 @@ function renderApp(){ renderHeader(); if(!ME){ viewLogin(); return; } viewEvents
   // 2) Realtime kanál
   startRealtime();
   // 3) Fallback polling každých 15 s
-  setInterval(()=> bootSync().then(refreshFromLocalAndRender).catch(()=>{}), 15000);
+  setInterval(()=> bootSync().then(refreshFromLocalAndRender).catch(()=>{}), 30000);
   // 4) Session a render
   const sid=localStorage.getItem(DB_SESSION);
   if(sid){ ME=getUserById(sid); }
