@@ -105,7 +105,7 @@ setInterval(renderDbInd,1000);
 /* ====== Supabase KV helpery ====== */
 async function kvLoad(key){
   const {data, error} = await supabase.from('kv').select('data').eq('key', key).single();
-  if(error && error.code!=='PGRST116') throw error; // not found = ok (vrátí [])
+  if(error && error.code!=='PGRST116') throw error; // not found = ok
   return data?.data ?? [];
 }
 async function kvSave(key, value){
@@ -125,7 +125,7 @@ function subscribeRealtime(){
     }, (payload) => {
       const row = payload.new || payload.old;
       if(!row?.key) return;
-      if(CURRENT_VIEW==='create' || CURRENT_VIEW==='login') return; // pauza, ať se nepřepíše formulář
+      if(CURRENT_VIEW==='create' || CURRENT_VIEW==='login') return; // pauza
 
       const arr = row.data || [];
       switch(row.key){
@@ -154,7 +154,7 @@ function subscribeRealtime(){
   }, 60*1000);
 }
 
-/* ====== Jednorázový refresh (fallback jen při watchdogu) ====== */
+/* ====== Jednorázový refresh (fallback) ====== */
 const _eq = (a,b)=>JSON.stringify(a)===JSON.stringify(b);
 async function refreshFromDB(){
   try{
@@ -209,9 +209,7 @@ async function ensureCoreRoles() {
     {key:'zdravotnik',label:'Zdravotník',isPublic:true}
   ];
   let changed = false;
-  for (const r of must) {
-    if (!ROLES.find(x=>x.key===r.key)) { ROLES.push(r); changed=true; }
-  }
+  for (const r of must) if (!ROLES.find(x=>x.key===r.key)) { ROLES.push(r); changed=true; }
   if (changed) await kvSave(DB_ROLES, ROLES);
 }
 
@@ -222,7 +220,7 @@ async function init(){
     ]);
     DB_ONLINE=true; DB_LAST_TS=Date.now(); DB_LAST_SRC='init';
     await seedIfEmpty();
-    await ensureCoreRoles();          // ✅ doplnit role, pokud chybí
+    await ensureCoreRoles();
     subscribeRealtime();
     renderApp();
   }catch(e){
@@ -230,7 +228,6 @@ async function init(){
     DB_ONLINE=false; DB_LAST_TS=Date.now(); DB_LAST_SRC='error';
   }
 }
-init();
 
 /* ====== Pravidla / role ====== */
 function userHasRole(u,r){ return (u?.roles||[]).includes(r); }
@@ -666,11 +663,18 @@ function viewPastEvents(){
 /* ====== Členové ====== */
 async function toggleUserRole(uid, roleKey, on){
   const u=getUserById(uid); if(!u) return;
+
+  // ❗ admin roli smí měnit jen Podpora
+  if (roleKey==='admin' && !isSupportUser(ME)) return;
+
+  // ❗ non-support nesmí manipulovat s podporou
   if(!isSupportUser(ME) && (userHasRole(u,'support') || roleKey==='support')) return;
+
   u.roles=u.roles||[];
   const has=u.roles.includes(roleKey);
   if(on===false || (on===undefined && has)){ u.roles=u.roles.filter(r=>r!==roleKey); }
   else if(!has){ u.roles.push(roleKey); }
+
   await kvSave(DB_USERS, USERS);
   await logActivity('user-role', null, null, `${u.name}: ${roleKey} ${on?'on':'off'}`);
   viewMembers();
@@ -695,7 +699,13 @@ async function toggleActive(uid){
 }
 async function deleteUser(uid){
   const u=getUserById(uid); if(!u) return;
+
+  // ❗ admin uživatele nelze smazat (ani Podporou)
+  if (userHasRole(u,'admin')) { alert('Uživatele s rolí „admin“ nelze smazat.'); return; }
+
+  // ❗ non-support nesmí mazat podporu
   if(!isSupportUser(ME) && userHasRole(u,'support')) return;
+
   if(!confirm('Opravdu smazat uživatele?')) return;
   USERS=USERS.filter(x=>x.id!==uid);
   await kvSave(DB_USERS, USERS);
@@ -706,7 +716,10 @@ async function addUser(){
   const p=$('#newPass').value.trim();
   const a=$('#newActive').checked;
   if(!n||!p) return alert('Vyplň jméno i heslo');
-  const rks=[...document.querySelectorAll('#newRoles input[type=checkbox]:checked')].map(i=>i.value);
+  const rks=[...document.querySelectorAll('#newRoles input[type=checkbox]:checked')]
+    .map(i=>i.value)
+    // bezpečnost: pokud by někdo ručně enable-oval admin checkbox, tady to ještě jednou filtruje
+    .filter(v => !(v==='admin' && !isSupportUser(ME)));
   USERS.push({id:uid(),name:n,password:p,roles:rks,isActive:a});
   await kvSave(DB_USERS, USERS);
   viewMembers();
@@ -714,22 +727,35 @@ async function addUser(){
 function viewMembers(){
   CURRENT_VIEW='members';
   const app=$('#app');
+
   const roleChips = (u)=>{
     const chips=(u.roles||[])
       .filter(rk=>canSeeRoleKey(rk))
-      .map(rk=>`<span class="chip">${roleLabel(rk)}<button class="btn ghost danger" type="button" onclick="toggleUserRole('${u.id}','${rk}',false)">×</button></span>`)
+      .map(rk=>{
+        // ❗ „x“ pro odebrání 'admin' jen pro Podporu
+        const canRemove = !(rk==='admin' && !isSupportUser(ME));
+        const btn = canRemove ? `<button class="btn ghost danger" type="button" onclick="toggleUserRole('${u.id}','${rk}',false)">×</button>` : '';
+        return `<span class="chip">${roleLabel(rk)}${btn}</span>`;
+      })
       .join('');
     return chips || '<span class="muted">—</span>';
   };
+
   const roleCheckboxes = (u)=>{
     const set=new Set(u.roles||[]);
-    return ROLES.filter(canSeeRoleObj).map(r=>`
-      <label class="row" style="gap:6px">
-        <input type="checkbox" ${set.has(r.key)?'checked':''} onchange="toggleUserRole('${u.id}','${r.key}', this.checked)">
-        ${r.label} <span class="muted">(${r.key})</span>
-      </label>
-    `).join('');
+    return ROLES.filter(canSeeRoleObj).map(r=>{
+      // ❗ checkbox 'admin' je pro ne-Podporu disabled
+      const dis = (r.key==='admin' && !isSupportUser(ME)) ? 'disabled' : '';
+      return `
+        <label class="row" style="gap:6px">
+          <input type="checkbox" ${set.has(r.key)?'checked':''} ${dis}
+                 onchange="toggleUserRole('${u.id}','${r.key}', this.checked)">
+          ${r.label} <span class="muted">(${r.key})</span>
+        </label>
+      `;
+    }).join('');
   };
+
   const rows=USERS
     .filter(canSeeUser)
     .map(u=>`
@@ -745,6 +771,7 @@ function viewMembers(){
             <button class="btn danger" type="button" onclick="deleteUser('${u.id}')">Smazat</button>
           </div>`:''}
       </div>
+
       ${isPrivileged()?`
         <div class="admin-box" style="margin-top:8px">
           <div class="grid3">
@@ -764,6 +791,7 @@ function viewMembers(){
           </div>
         </div>`:''}
     </div>`).join('');
+
   const addBox = isPrivileged()?`
     <div class="card" style="margin-top:12px">
       <h4>Přidat člena</h4>
@@ -775,16 +803,20 @@ function viewMembers(){
       <div style="margin-top:8px">
         <b>Role</b>
         <div id="newRoles" style="margin-top:6px">
-          ${ROLES.filter(canSeeRoleObj).map(r=>`
-            <label class="row" style="gap:6px">
-              <input type="checkbox" value="${r.key}"> ${r.label} <span class="muted">(${r.key})</span>
-            </label>`).join('')}
+          ${ROLES.filter(canSeeRoleObj).map(r=>{
+            const dis = (r.key==='admin' && !isSupportUser(ME)) ? 'disabled' : '';
+            return `
+              <label class="row" style="gap:6px">
+                <input type="checkbox" value="${r.key}" ${dis}> ${r.label} <span class="muted">(${r.key})</span>
+              </label>`;
+          }).join('')}
         </div>
       </div>
       <div class="row" style="justify-content:flex-end;margin-top:10px">
         <button class="btn primary" type="button" onclick="addUser()">Přidat</button>
       </div>
     </div>` : '';
+
   app.innerHTML=`<h3>Členové</h3>${rows}${addBox}`;
 }
 
@@ -901,6 +933,7 @@ function renderApp(){
   }
 }
 renderApp();
+init();
 
 /* ====== Global handlers ====== */
 window.viewCreateEvent=viewCreateEvent;
@@ -925,7 +958,6 @@ window.toggleUserRole=toggleUserRole;
 window.saveUserInline=saveUserInline;
 window.toggleActive=toggleActive;
 
-// ✅ funkce pro Role (aby volání z UI fungovalo)
 window.editRoleOpen=editRoleOpen;
 window.saveRole=saveRole;
 window.deleteRole=deleteRole;
