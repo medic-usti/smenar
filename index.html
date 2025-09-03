@@ -195,14 +195,15 @@ function renderHeader(){
 }
 
 function viewLogin(){
+  CURRENT_VIEW = 'login'; // ⬅️ pauza auto-refreshu na tomto zařízení
   const app=$('#app');
   app.innerHTML=`
     <div class="card" style="max-width:420px;margin:40px auto">
       <h3>Přihlášení</h3>
-      <input id="loginName" class="input" placeholder="Jméno">
+      <input id="loginName" class="input" placeholder="Jméno" autocomplete="username">
       <div class="row" style="justify-content:space-between;width:100%">
-        <input id="loginPass" class="input" type="password" placeholder="Heslo" style="flex:1">
-        <button class="btn" id="togglePass" type="button">👁️</button>
+        <input id="loginPass" class="input" type="password" placeholder="Heslo" style="flex:1" autocomplete="current-password">
+        <button class="btn" id="togglePass" type="button" aria-label="Zobrazit/skrýt heslo">👁️</button>
       </div>
       <button class="btn primary" id="btnLogin" type="button">Přihlásit</button>
     </div>`;
@@ -869,9 +870,9 @@ function renderApp(){
 }
 renderApp();
 
-/* Auto-refresh local DB každých 30 s (mimo editor) */
+/* Auto-refresh local DB každých 30 s (mimo editor a login) */
 setInterval(()=>{
-  if(CURRENT_VIEW==='create') return; // nevyrušit editaci
+  if(CURRENT_VIEW==='create' || CURRENT_VIEW==='login') return; // ⬅️ pauza při loginu i při editaci
   USERS=load(DB_USERS); ACTIONS=load(DB_ACTIONS); ROLES=load(DB_ROLES); ACTIVITY=load(DB_ACTIVITY); ARCHIVE=load(DB_ARCHIVE);
   DB_LAST_TS=Date.now(); DB_LAST_SRC='auto';
   renderApp();
