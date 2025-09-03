@@ -135,7 +135,7 @@ function renderHeader(){
         <div class="menu" id="adminMenu">
           <button class="btn" id="adminBtn" type="button">Admin ▾</button>
           <div class="dropdown">
-            <button type="button" onclick="">Události</button>
+            <button type="button" onclick="viewEvents()">Události</button>
             <button type="button" onclick="viewPastEvents()">Proběhlé akce</button>
             <button type="button" onclick="viewMembers()">Členové</button>
             <button type="button" onclick="viewRoles()">Role</button>
@@ -169,7 +169,10 @@ function viewLogin(){
     USERS=load(DB_USERS);
     const u=(USERS||[]).find(x=>x.name===n && x.password===p && x.isActive!==false);
     if(!u){ alert('Neplatné údaje'); return; }
-    ME=u; localStorage.setItem(DB_SESSION, ME.id); ensureActiveRole(); renderApp();
+    ME=u; localStorage.setItem(DB_SESSION, ME.id); ensureActiveRole();
+    // FIX: po přihlášení vždy na Události
+    CURRENT_VIEW='events'; CURRENT_EDIT_ID=null;
+    renderApp();
   };
 }
 
@@ -417,7 +420,8 @@ function viewMembers(){
       </div>
     </div>` : '';
 
-  app.innerHTML=`<h3>Členové</h3>${rows}${addBox}`;
+  const appEl=$('#app');
+  appEl.innerHTML=`<h3>Členové</h3>${rows}${addBox}`;
 }
 
 function toggleUserRole(uid, roleKey, on){
@@ -428,7 +432,6 @@ function toggleUserRole(uid, roleKey, on){
   if(on===false || (on===undefined && has)){ u.roles=u.roles.filter(r=>r!==roleKey); }
   else if(!has){ u.roles.push(roleKey); }
   save(DB_USERS,USERS);
-  // nelagovat: jen vizuální refresh současné stránky
   viewMembers();
 }
 
@@ -529,7 +532,6 @@ function saveRole(){
 function deleteRole(key){
   if(!confirm('Smazat roli?')) return;
   ROLES=load(DB_ROLES).filter(r=>r.key!==key);
-  // zároveň odeber roli všem uživatelům
   USERS=load(DB_USERS).map(u=>({ ...u, roles:(u.roles||[]).filter(rk=>rk!==key) }));
   save(DB_ROLES,ROLES); save(DB_USERS,USERS);
   viewRoles();
@@ -548,7 +550,12 @@ function addRole(){
 
 /* ===== Activity, Export ===== */
 function viewActivity(){ CURRENT_VIEW='activity'; const app=$('#app'); const list=(load(DB_ACTIVITY)||[]).slice(-200).reverse().map(a=>{ const ts=new Date(a.ts).toLocaleString(); return `<li>${ts}: <b>${a.userName||a.userId||'uživatel'}</b> — ${a.type} (${a.eventTitle||a.eventId||''})</li>`; }).join(''); app.innerHTML=`<h3>Aktivita</h3><div class="card"><ul class="list-plain">${list||'<li class="muted">Žádná aktivita.</li>'}</ul></div>`; }
-function viewExport(){ CURRENT_VIEW='export'; const app=$('#app'); app.innerHTML=`<h3>Export / Záloha</h3><div class="card"><div class="row"><button class="btn" type="button" onclick="downloadJson()">Stáhnout JSON</button></div></div>`; }
+function viewExport(){
+  // FIX: export jen pro podporu
+  if(!isSupportUser(ME)){ CURRENT_VIEW='events'; viewEvents(); return; }
+  CURRENT_VIEW='export';
+  const app=$('#app'); app.innerHTML=`<h3>Export / Záloha</h3><div class="card"><div class="row"><button class="btn" type="button" onclick="downloadJson()">Stáhnout JSON</button></div></div>`;
+}
 function downloadJson(){ const data={users:load(DB_USERS),roles:load(DB_ROLES),actions:load(DB_ACTIONS),archive:load(DB_ARCHIVE),activity:load(DB_ACTIVITY)}; const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='smenar_backup.json'; a.click(); }
 
 /* ===== Router ===== */
@@ -560,6 +567,10 @@ function renderApp(){
       if(sid){ USERS=load(DB_USERS); const u=getUserById(sid); if(u && u.isActive!==false){ ME=u; ensureActiveRole(); } else localStorage.removeItem(DB_SESSION); }
     }
     if(!ME){ viewLogin(); return; }
+
+    // FIX: když by náhodou zůstal export a uživatel není support, vrať na Události
+    if(CURRENT_VIEW==='export' && !isSupportUser(ME)) CURRENT_VIEW='events';
+
     switch(CURRENT_VIEW){
       case 'create': viewCreateEvent(CURRENT_EDIT_ID); break;
       case 'members': viewMembers(); break;
@@ -592,6 +603,8 @@ window.leaveEvent=leaveEvent;
 function logout(){
   localStorage.removeItem(DB_SESSION);
   ME=null; ACTIVE_ROLE=null;
+  // FIX: po logoutu reset pohledu
+  CURRENT_VIEW='events'; CURRENT_EDIT_ID=null;
   renderHeader();
   viewLogin();
 }
