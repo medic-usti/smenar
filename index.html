@@ -69,13 +69,13 @@
   <main><div id="app"></div></main>
   <div class="toast-wrap" id="toasts"></div>
 
-  <!-- Supabase JS (v2) přes ESM import -->
+  <!-- Supabase JS (v2) přes jsDelivr ESM -->
   <script type="module">
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
 
-/* ====== DOPLŇ: tvoje Supabase přístupy ====== */
-const SUPABASE_URL = "https://YOUR-PROJECT.supabase.co";
-const SUPABASE_ANON_KEY = "YOUR-ANON-KEY";
+/* ====== Supabase přístupy (tvé) ====== */
+const SUPABASE_URL = "https://lqpyavwhzpvdbxdidfry.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxxcHlhdndoenB2ZGJ4ZGlkZnJ5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTY4NDQxNzYsImV4cCI6MjA3MjQyMDE3Nn0.baWqIwQrlz8KJ6CfOt7-md7FZvBDSXagFXNpHy_eOH4";
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 /* ====== Konstanty & stav ====== */
@@ -105,7 +105,7 @@ setInterval(renderDbInd,1000);
 /* ====== Supabase KV helpery ====== */
 async function kvLoad(key){
   const {data, error} = await supabase.from('kv').select('data').eq('key', key).single();
-  if(error && error.code!=='PGRST116') throw error; // not found
+  if(error && error.code!=='PGRST116') throw error; // not found = ok (vrátí [])
   return data?.data ?? [];
 }
 async function kvSave(key, value){
