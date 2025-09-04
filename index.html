@@ -168,6 +168,8 @@ async function refreshFromDB(){
 /* ===== Seed & init ===== */
 async function seedIfEmpty(){
   let changed=false;
+
+  // seedni role jen když nejsou žádné
   if(!ROLES.length){
     ROLES=[
       {key:'ridic',label:'Řidič',isPublic:true},
@@ -178,16 +180,21 @@ async function seedIfEmpty(){
     ];
     await kvSave(DB_ROLES,ROLES); changed=true;
   }
+
+  // seedni uživatele jen když nejsou žádní
   if(!USERS.length){
     USERS=[
       {id:'u1',name:'Podpora',password:'support',roles:['support','admin'],isActive:true},
       {id:'u2',name:'admin',password:'1111',roles:['admin'],isActive:true},
-      {id:'u3',name:'Adam',password:'adam',roles:['ridic','zza'],isActive:true},
-      {id:'u4',name:'Bára',password:'bara',roles:['zdravotnik'],isActive:true}
     ];
     await kvSave(DB_USERS,USERS); changed=true;
   }
-  if(!ACTIONS.length){
+
+  // ❌ NESEEDOVAT DEMO AKCI
+  // Pokud přesto chceš seed akci pouze při úplně prvním běhu,
+  // odkomentuj podmínku, která se spustí jen když nebyly ani role, ani uživatelé:
+  /*
+  if(changed && !ACTIONS.length){
     const cap={}, su={}; ['ridic','zza','zdravotnik'].forEach(k=>{cap[k]=(k==='zza'?2:1); su[k]=[];});
     ACTIONS=[{
       id:'a1',date:today(),title:'Dozor – fotbal',location:'Stadion Kladno',
@@ -196,10 +203,14 @@ async function seedIfEmpty(){
     }];
     await kvSave(DB_ACTIONS,ACTIONS); changed=true;
   }
+  */
+
   if(!ARCHIVE.length){ await kvSave(DB_ARCHIVE,[]); changed=true; }
   if(!ACTIVITY.length){ await kvSave(DB_ACTIVITY,[]); changed=true; }
+
   if(changed){ DB_LAST_SRC='seed'; DB_LAST_TS=Date.now(); }
 }
+
 async function ensureCoreRoles(){
   const must=[
     {key:'admin',label:'Admin',isPublic:false},
