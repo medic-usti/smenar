@@ -294,11 +294,17 @@ function renderHeader(){
       <button type="button" onclick="viewPastEvents()">Proběhlé akce</button>
       <button type="button" onclick="viewMembers()">Členové</button>
       <button type="button" onclick="viewRoles()">Role</button>
-      ${isSupportUser(ME)?`<button type="button" onclick="viewActivity()">Aktivita</button>`:''}
+
+      ${isSupportUser(ME) ? `
+        <button type="button" onclick="viewLogins()">Loginy</button>
+        <button type="button" onclick="viewActivity()">Aktivita</button>
+      ` : ''}
+
       <button type="button" onclick="viewCreateEvent()">Nová událost</button>
       ${isSupportUser(ME)?`<button type="button" onclick="viewExport()">Export / Záloha</button>`:''}
     </div>
-  </div>`:''}
+  </div>` : '' }
+
 
       <button class="btn" type="button" onclick="logout()">Odhlásit</button>
     </div>`;
