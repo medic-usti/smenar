@@ -996,12 +996,24 @@ async function addRole(){
 /* ===== Aktivita + Export + Loginy ===== */
 function viewActivity(){
   CURRENT_VIEW='activity';
-  const list=(ACTIVITY||[]).slice(-200).reverse().map(a=>{
-    const ts=new Date(a.ts).toLocaleString();
-    return `<li>${ts}: <b>${a.userName||a.userId||'uživatel'}</b> — ${a.type} ${a.eventTitle?('('+a.eventTitle+')'):''} ${a.detail?('— '+a.detail):''}</li>`;
-  }).join('');
-  $('#app').innerHTML=`<h3>Aktivita</h3><div class="card"><ul class="list-plain">${list||'<li class="muted">Žádná aktivita.</li>'}</ul></div>`;
+
+  // Admini NEvidí login/logout; Podpora je vidí
+  const src = isSupportUser(ME)
+    ? (ACTIVITY || [])
+    : (ACTIVITY || []).filter(a => a.type !== 'login' && a.type !== 'logout');
+
+  const list = src
+    .slice(-200)
+    .reverse()
+    .map(a=>{
+      const ts=new Date(a.ts).toLocaleString();
+      return `<li>${ts}: <b>${a.userName||a.userId||'uživatel'}</b> — ${a.type} ${a.eventTitle?('('+a.eventTitle+')'):''} ${a.detail?('— '+a.detail):''}</li>`;
+    })
+    .join('') || '<li class="muted">Žádná aktivita.</li>';
+
+  $('#app').innerHTML=`<h3>Aktivita</h3><div class="card"><ul class="list-plain">${list}</ul></div>`;
 }
+
 
 function viewLogins(){
   if(!isSupportUser(ME)){ CURRENT_VIEW='events'; viewEvents(); return; }
