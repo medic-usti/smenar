@@ -168,8 +168,6 @@ async function refreshFromDB(){
 /* ===== Seed & init ===== */
 async function seedIfEmpty(){
   let changed=false;
-
-  // seedni role jen když nejsou žádné
   if(!ROLES.length){
     ROLES=[
       {key:'ridic',label:'Řidič',isPublic:true},
@@ -180,37 +178,20 @@ async function seedIfEmpty(){
     ];
     await kvSave(DB_ROLES,ROLES); changed=true;
   }
-
-  // seedni uživatele jen když nejsou žádní
   if(!USERS.length){
     USERS=[
       {id:'u1',name:'Podpora',password:'support',roles:['support','admin'],isActive:true},
       {id:'u2',name:'admin',password:'1111',roles:['admin'],isActive:true},
+      {id:'u3',name:'Adam',password:'adam',roles:['ridic','zza'],isActive:true},
+      {id:'u4',name:'Bára',password:'bara',roles:['zdravotnik'],isActive:true}
     ];
     await kvSave(DB_USERS,USERS); changed=true;
   }
-
-  // ❌ NESEEDOVAT DEMO AKCI
-  // Pokud přesto chceš seed akci pouze při úplně prvním běhu,
-  // odkomentuj podmínku, která se spustí jen když nebyly ani role, ani uživatelé:
-  /*
-  if(changed && !ACTIONS.length){
-    const cap={}, su={}; ['ridic','zza','zdravotnik'].forEach(k=>{cap[k]=(k==='zza'?2:1); su[k]=[];});
-    ACTIONS=[{
-      id:'a1',date:today(),title:'Dozor – fotbal',location:'Stadion Kladno',
-      timeFrom:'15:00',timeTo:'20:00',capacity:cap,signups:su,signupUnlock:null,
-      isPaid:false,adminNote:'', tech:'', notePublic:''
-    }];
-    await kvSave(DB_ACTIONS,ACTIONS); changed=true;
-  }
-  */
-
+  // ZDE NESEEDUJEME DEMO AKCI (aby se nevracela sama)
   if(!ARCHIVE.length){ await kvSave(DB_ARCHIVE,[]); changed=true; }
   if(!ACTIVITY.length){ await kvSave(DB_ACTIVITY,[]); changed=true; }
-
   if(changed){ DB_LAST_SRC='seed'; DB_LAST_TS=Date.now(); }
 }
-
 async function ensureCoreRoles(){
   const must=[
     {key:'admin',label:'Admin',isPublic:false},
@@ -249,10 +230,42 @@ function canSeeRoleKey(key){ return !(key==='support' && !isSupportUser(ME)); }
 function canSeeRoleObj(r){ return canSeeRoleKey(r?.key); }
 function canSeeUser(u){ if(isSupportUser(ME)) return true; return !userHasRole(u,'support'); }
 
-/* ===== Aktivita ===== */
+/* ===== Aktivita + přesné cíle (Podpora uvidí kdy se kdo přihlásil) ===== */
 async function logActivity(type, eventId, eventTitle, detail){
   ACTIVITY.push({ ts:Date.now(), type, eventId, eventTitle, detail, userId:ME?.id, userName:ME?.name });
   await kvSave(DB_ACTIVITY, ACTIVITY);
+}
+function fmtCz(ts){
+  try{
+    return new Date(ts).toLocaleString('cs-CZ', {year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+  }catch{ return ''; }
+}
+/** Rozšířený zápis do aktivity s cílovým uživatelem (pro přesný čas přihlášení/přiřazení). */
+async function recordActivity({type, eventId, eventTitle, detail, actorId, actorName, targetUserId, targetUserName, ts}){
+  ACTIVITY.push({
+    ts: ts || Date.now(),
+    type,
+    eventId,
+    eventTitle,
+    detail,
+    userId: actorId ?? (ME?.id),
+    userName: actorName ?? (ME?.name),
+    targetUserId: targetUserId || null,
+    targetUserName: targetUserName || null
+  });
+  await kvSave(DB_ACTIVITY, ACTIVITY);
+}
+/** Najde čas přihlášení/ručního přiřazení konkrétního uživatele v akci. */
+function signupTimeFor(eventId, userId){
+  const relevant = (ACTIVITY||[]).filter(a=>{
+    if(a.eventId!==eventId) return false;
+    if(a.type!=='join' && a.type!=='assign') return false;
+    if(a.targetUserId) return a.targetUserId===userId;
+    if(a.type==='join' && a.userId===userId) return true; // fallback pro starší záznamy bez targetUserId
+    return false;
+  });
+  if(!relevant.length) return null;
+  return relevant.reduce((mx,a)=> Math.max(mx, a.ts||0), 0);
 }
 
 /* ===== Event helpers ===== */
@@ -269,13 +282,11 @@ function renderHeader(){
   ensureActiveRole();
   const prs=userPublicRoles(ME);
   const roleSel=(ACTIVE_ROLE && prs.length)?`<select class="select" id="selActiveRole">${prs.map(r=>`<option value="${r}" ${r===ACTIVE_ROLE?'selected':''}>${roleLabel(r)}</option>`).join('')}</select>`:`<span class="muted">Bez veřejné role</span>`;
-
   const publicNav = `
     <div class="row">
       <button class="btn" type="button" onclick="viewEvents()">Události</button>
       <button class="btn" type="button" onclick="viewPastEvents()">Proběhlé</button>
     </div>`;
-
   el.innerHTML=`
     <div class="row">
       <span class="badge">${ME.name}</span>
@@ -351,7 +362,15 @@ async function assignMember(aid, roleKey, uid){
     a.signups[roleKey].push(uid);
     if(ACTIONS.some(x=>x.id===aid)) await kvSave(DB_ACTIONS,ACTIONS); else await kvSave(DB_ARCHIVE,ARCHIVE);
     const u=getUserById(uid); toast('Přiřazen člen', `${u?.name||uid} → ${roleLabel(roleKey)}`);
-    await logActivity('assign', a.id, a.title, `${u?.name||uid} (${roleLabel(roleKey)})`);
+    // přesný záznam pro pozdější zobrazení času u jména
+    await recordActivity({
+      type:'assign',
+      eventId:a.id,
+      eventTitle:a.title,
+      detail:`${u?.name||uid} (${roleLabel(roleKey)})`,
+      targetUserId: uid,
+      targetUserName: u?.name||uid
+    });
   }
 }
 async function removeMember(aid, roleKey, uid){
@@ -391,7 +410,15 @@ async function joinEvent(aid){
   a.signups[ACTIVE_ROLE].push(ME.id);
   await kvSave(DB_ACTIONS,ACTIONS);
   toast('Přihlášení úspěšné', a.title);
-  await logActivity('join', a.id, a.title, `${ME.name} (${roleLabel(ACTIVE_ROLE)})`);
+  // přesný záznam s cílovým uživatelem (sám sebe)
+  await recordActivity({
+    type:'join',
+    eventId:a.id,
+    eventTitle:a.title,
+    detail:`${ME.name} (${roleLabel(ACTIVE_ROLE)})`,
+    targetUserId: ME.id,
+    targetUserName: ME.name
+  });
 }
 async function leaveEvent(aid){
   const a=ACTIONS.find(x=>x.id===aid); if(!a||!ME||!ACTIVE_ROLE) return;
@@ -513,8 +540,10 @@ function viewEvents(){
       const list=a.signups?.[r]||[];
       const names=list.map(id=>{
         const u=getUserById(id)||{};
+        const ts = signupTimeFor(a.id, id);
+        const when = (isSupportUser(ME) && ts) ? ` <span class="muted small">(${fmtCz(ts)})</span>` : ''; // ← pokud chceš i pro adminy, změň na isPrivileged()
         const rm = isPrivileged()? ` <button class="x" title="Odebrat" onclick="removeMember('${a.id}','${r}','${id}')">×</button>` : '';
-        return `<span class="chip">${u.name||id}${rm}</span>`;
+        return `<span class="chip">${u.name||id}${when}${rm}</span>`;
       }).join(' ');
       return `<li><b>${roleLabel(r)}</b>: ${list.length}/${(a.capacity?.[r]||0)} — ${names||'—'}</li>`;
     }).join('');
@@ -637,8 +666,10 @@ function viewPastEvents(){
       const list=a.signups?.[r]||[];
       const names=list.map(id=>{
         const u=getUserById(id)||{};
+        const ts = signupTimeFor(a.id, id);
+        const when = (isSupportUser(ME) && ts) ? ` <span class="muted small">(${fmtCz(ts)})</span>` : ''; // ← stejně jako výše
         const rm = isPrivileged()? ` <button class="x" title="Odebrat" onclick="removeMember('${a.id}','${r}','${id}')">×</button>` : '';
-        return `<span class="chip">${u.name||id}${rm}</span>`;
+        return `<span class="chip">${u.name||id}${when}${rm}</span>`;
       }).join(' ');
       return `<li><b>${roleLabel(r)}</b>: ${list.length}/${(a.capacity?.[r]||0)} — ${names||'—'}</li>`;
     }).join('');
@@ -978,7 +1009,8 @@ function viewActivity(){
   CURRENT_VIEW='activity';
   const list=(ACTIVITY||[]).slice(-200).reverse().map(a=>{
     const ts=new Date(a.ts).toLocaleString();
-    return `<li>${ts}: <b>${a.userName||a.userId||'uživatel'}</b> — ${a.type} ${a.eventTitle?('('+a.eventTitle+')'):''} ${a.detail?('— '+a.detail):''}</li>`;
+    const tgt = a.targetUserName ? ` → <span class="muted">${a.targetUserName}</span>` : '';
+    return `<li>${ts}: <b>${a.userName||a.userId||'uživatel'}</b>${tgt} — ${a.type} ${a.eventTitle?('('+a.eventTitle+')'):''} ${a.detail?('— '+a.detail):''}</li>`;
   }).join('');
   $('#app').innerHTML=`<h3>Aktivita</h3><div class="card"><ul class="list-plain">${list||'<li class="muted">Žádná aktivita.</li>'}</ul></div>`;
 }
