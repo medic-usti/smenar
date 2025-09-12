@@ -252,6 +252,13 @@ function lastLogoutTsForUser(uid){
   for(const a of ACTIVITY){ if(a.userId===uid && a.type==='logout' && a.ts>ts) ts=a.ts; }
   return ts||null;
 }
+    function isUserCurrentlyLogged(uid){
+  const li = lastLoginTsForUser(uid);
+  const lo = lastLogoutTsForUser(uid);
+  const logged = !!li && (!lo || li > lo);
+  return { logged, since: logged ? li : null };
+}
+
 
 /* ===== Event helpers ===== */
 function safeHHMM(s){ return /^\d{2}:\d{2}$/.test(s||'')?s:''; }
@@ -1000,22 +1007,37 @@ function viewLogins(){
   if(!isSupportUser(ME)){ CURRENT_VIEW='events'; viewEvents(); return; }
   CURRENT_VIEW='logins';
 
-  // Poslední login/logout per user
+  // Poslední login/logout + stav přihlášení per user
   const perUser = USERS
     .filter(u=>canSeeUser(u) || isSupportUser(ME))
-    .map(u=>({ u, li:lastLoginTsForUser(u.id), lo:lastLogoutTsForUser(u.id) }))
-    .sort((a,b)=> (b.li||0)-(a.li||0));
+    .map(u=>{
+      const li = lastLoginTsForUser(u.id);
+      const lo = lastLogoutTsForUser(u.id);
+      const { logged, since } = isUserCurrentlyLogged(u.id);
+      return { u, li, lo, logged, since };
+    })
+    // seřadit nejdřív podle toho, kdo je právě přihlášen, pak podle data posledního loginu
+    .sort((a,b)=>{
+      if (a.logged !== b.logged) return a.logged ? -1 : 1;
+      return (b.li||0) - (a.li||0);
+    });
 
-  const tableRows = perUser.map(x=>`
-    <tr>
-      <td>${h(x.u.name)}</td>
-      <td>${x.u.isActive? '✅ aktivní':'⛔ deaktivován'}</td>
-      <td>${x.li? new Date(x.li).toLocaleString() : '—'}</td>
-      <td>${x.lo? new Date(x.lo).toLocaleString() : '—'}</td>
-    </tr>
-  `).join('');
+  const tableRows = perUser.map(x=>{
+    const loggedBadge = x.logged
+      ? `✅ Ano${x.since ? ` <span class="muted small">(od ${new Date(x.since).toLocaleString()})</span>` : ''}`
+      : '❌ Ne';
+    return `
+      <tr>
+        <td>${h(x.u.name)}</td>
+        <td>${x.u.isActive? '✅ aktivní':'⛔ deaktivován'}</td>
+        <td>${x.li? new Date(x.li).toLocaleString() : '—'}</td>
+        <td>${x.lo? new Date(x.lo).toLocaleString() : '—'}</td>
+        <td>${loggedBadge}</td>
+      </tr>
+    `;
+  }).join('');
 
-  // Poslední jednotlivé login/logout události (timeline)
+  // Chronologická timeline login/logout událostí
   const recent = (ACTIVITY||[])
     .filter(a=>a.type==='login' || a.type==='logout')
     .slice(-200)
@@ -1032,7 +1054,15 @@ function viewLogins(){
       <h4>Poslední přihlášení / odhlášení podle uživatele</h4>
       <div style="overflow:auto">
         <table class="table">
-          <thead><tr><th>Uživatel</th><th>Stav</th><th>Poslední přihlášení</th><th>Poslední odhlášení</th></tr></thead>
+          <thead>
+            <tr>
+              <th>Uživatel</th>
+              <th>Stav</th>
+              <th>Poslední přihlášení</th>
+              <th>Poslední odhlášení</th>
+              <th>Přihlášen?</th>
+            </tr>
+          </thead>
           <tbody>${tableRows}</tbody>
         </table>
       </div>
