@@ -994,25 +994,35 @@ async function addRole(){
 }
 
 /* ===== Aktivita + Export + Loginy ===== */
+// ===== Aktivita (admin NEvidí login/logout; Podpora je vidí) =====
 function viewActivity(){
-  CURRENT_VIEW='activity';
+  CURRENT_VIEW = 'activity';
 
-  // Admini NEvidí login/logout; Podpora je vidí
-  const src = isSupportUser(ME)
-    ? (ACTIVITY || [])
-    : (ACTIVITY || []).filter(a => a.type !== 'login' && a.type !== 'logout');
+  // Admini: skryj login/logout; Podpora: zobraz vše
+  const items = (ACTIVITY || []).filter(a => {
+    if (isSupportUser(ME)) return true;    // Podpora vidí vše
+    return a.type !== 'login' && a.type !== 'logout';
+  });
 
-  const list = src
+  const list = items
     .slice(-200)
     .reverse()
-    .map(a=>{
-      const ts=new Date(a.ts).toLocaleString();
-      return `<li>${ts}: <b>${a.userName||a.userId||'uživatel'}</b> — ${a.type} ${a.eventTitle?('('+a.eventTitle+')'):''} ${a.detail?('— '+a.detail):''}</li>`;
+    .map(a => {
+      const ts = new Date(a.ts).toLocaleString();
+      return `<li>${ts}: <b>${a.userName || a.userId || 'uživatel'}</b> — ${a.type} ${a.eventTitle ? '('+a.eventTitle+')' : ''} ${a.detail ? '— '+a.detail : ''}</li>`;
     })
     .join('') || '<li class="muted">Žádná aktivita.</li>';
 
-  $('#app').innerHTML=`<h3>Aktivita</h3><div class="card"><ul class="list-plain">${list}</ul></div>`;
+  $('#app').innerHTML = `
+    <h3>Aktivita</h3>
+    <div class="card">
+      <ul class="list-plain">${list}</ul>
+    </div>`;
 }
+
+// zajistí, že se volá správná verze:
+window.viewActivity = viewActivity;
+
 
 
 function viewLogins(){
