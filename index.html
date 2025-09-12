@@ -287,19 +287,19 @@ function renderHeader(){
       ${roleSel}
       ${publicNav}
       ${isPrivileged()? `
-        <div class="menu" id="adminMenu">
-          <button class="btn" id="adminBtn" type="button">Admin ▾</button>
-          <div class="dropdown">
-            <button type="button" onclick="viewEvents()">Události</button>
-            <button type="button" onclick="viewPastEvents()">Proběhlé akce</button>
-            <button type="button" onclick="viewMembers()">Členové</button>
-            <button type="button" onclick="viewRoles()">Role</button>
-            <button type="button" onclick="viewActivity()">Aktivita</button>
-            ${isSupportUser(ME)?`<button type="button" onclick="viewLogins()">Loginy</button>`:''}
-            <button type="button" onclick="viewCreateEvent()">Nová událost</button>
-            ${isSupportUser(ME)?`<button type="button" onclick="viewExport()">Export / Záloha</button>`:''}
-          </div>
-        </div>`:''}
+  <div class="menu" id="adminMenu">
+    <button class="btn" id="adminBtn" type="button">Admin ▾</button>
+    <div class="dropdown">
+      <button type="button" onclick="viewEvents()">Události</button>
+      <button type="button" onclick="viewPastEvents()">Proběhlé akce</button>
+      <button type="button" onclick="viewMembers()">Členové</button>
+      <button type="button" onclick="viewRoles()">Role</button>
+      ${isSupportUser(ME)?`<button type="button" onclick="viewActivity()">Aktivita</button>`:''}
+      <button type="button" onclick="viewCreateEvent()">Nová událost</button>
+      ${isSupportUser(ME)?`<button type="button" onclick="viewExport()">Export / Záloha</button>`:''}
+    </div>
+  </div>`:''}
+
       <button class="btn" type="button" onclick="logout()">Odhlásit</button>
     </div>`;
   const sel=document.getElementById('selActiveRole'); if(sel) sel.onchange=()=>{ ACTIVE_ROLE=sel.value; renderApp(); };
