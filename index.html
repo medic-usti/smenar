@@ -52,6 +52,9 @@
     .small{font-size:12px}
     .paid{background:#ecfdf5;border-color:#10b981;color:#065f46}
     .prewrap{white-space:pre-wrap; word-break:break-word}
+    .table{width:100%; border-collapse:collapse}
+    .table th,.table td{border:1px solid var(--border); padding:6px 8px; text-align:left}
+    .table th{background:#f8fafc}
   </style>
 </head>
 <body>
@@ -169,7 +172,6 @@ async function refreshFromDB(){
 async function seedIfEmpty(){
   let changed=false;
 
-  // seedni role jen když nejsou žádné
   if(!ROLES.length){
     ROLES=[
       {key:'ridic',label:'Řidič',isPublic:true},
@@ -181,7 +183,6 @@ async function seedIfEmpty(){
     await kvSave(DB_ROLES,ROLES); changed=true;
   }
 
-  // seedni uživatele jen když nejsou žádní
   if(!USERS.length){
     USERS=[
       {id:'u1',name:'Podpora',password:'support',roles:['support','admin'],isActive:true},
@@ -189,21 +190,6 @@ async function seedIfEmpty(){
     ];
     await kvSave(DB_USERS,USERS); changed=true;
   }
-
-  // ❌ NESEEDOVAT DEMO AKCI
-  // Pokud přesto chceš seed akci pouze při úplně prvním běhu,
-  // odkomentuj podmínku, která se spustí jen když nebyly ani role, ani uživatelé:
-  /*
-  if(changed && !ACTIONS.length){
-    const cap={}, su={}; ['ridic','zza','zdravotnik'].forEach(k=>{cap[k]=(k==='zza'?2:1); su[k]=[];});
-    ACTIONS=[{
-      id:'a1',date:today(),title:'Dozor – fotbal',location:'Stadion Kladno',
-      timeFrom:'15:00',timeTo:'20:00',capacity:cap,signups:su,signupUnlock:null,
-      isPaid:false,adminNote:'', tech:'', notePublic:''
-    }];
-    await kvSave(DB_ACTIONS,ACTIONS); changed=true;
-  }
-  */
 
   if(!ARCHIVE.length){ await kvSave(DB_ARCHIVE,[]); changed=true; }
   if(!ACTIVITY.length){ await kvSave(DB_ACTIVITY,[]); changed=true; }
@@ -255,6 +241,13 @@ async function logActivity(type, eventId, eventTitle, detail){
   await kvSave(DB_ACTIVITY, ACTIVITY);
 }
 
+/* >>> Pomocné funkce pro loginy <<< */
+function lastLoginTsForUser(uid){
+  let ts=0;
+  for(const a of ACTIVITY){ if(a.userId===uid && a.type==='login' && a.ts>ts) ts=a.ts; }
+  return ts||null;
+}
+
 /* ===== Event helpers ===== */
 function safeHHMM(s){ return /^\d{2}:\d{2}$/.test(s||'')?s:''; }
 function eventEndMs(a){ const d=a?.date||today(); const end=safeHHMM(a?.timeTo)||safeHHMM(a?.timeFrom)||'23:59'; const t=new Date(`${d}T${end}`).getTime(); return isNaN(t)?new Date(`${d}T23:59`).getTime():t; }
@@ -290,6 +283,7 @@ function renderHeader(){
             <button type="button" onclick="viewMembers()">Členové</button>
             <button type="button" onclick="viewRoles()">Role</button>
             <button type="button" onclick="viewActivity()">Aktivita</button>
+            ${isSupportUser(ME)?`<button type="button" onclick="viewLogins()">Loginy</button>`:''}
             <button type="button" onclick="viewCreateEvent()">Nová událost</button>
             ${isSupportUser(ME)?`<button type="button" onclick="viewExport()">Export / Záloha</button>`:''}
           </div>
@@ -313,12 +307,14 @@ function viewLogin(){
       <button class="btn primary" id="btnLogin" type="button">Přihlásit</button>
     </div>`;
   $('#togglePass').onclick=()=>{ const i=$('#loginPass'); i.type=(i.type==='password'?'text':'password'); };
-  $('#btnLogin').onclick=()=>{
+  $('#btnLogin').onclick=async ()=>{
     const n=$('#loginName').value.trim();
     const p=$('#loginPass').value;
     const u=(USERS||[]).find(x=>x.name===n && x.password===p && x.isActive!==false);
     if(!u){ alert('Neplatné údaje'); return; }
     ME=u; localStorage.setItem(DB_SESSION, ME.id); ensureActiveRole();
+    // >>> zapiš login do aktivity
+    await logActivity('login', null, null, 'uživatel se přihlásil');
     CURRENT_VIEW='events'; CURRENT_EDIT_ID=null;
     renderApp();
   };
@@ -817,11 +813,17 @@ function viewMembers(){
 
   const rows=USERS
     .filter(canSeeUser)
-    .map(u=>`
+    .map(u=>{
+      const lastLoginTs = lastLoginTsForUser(u.id);
+      const lastLoginLine = isSupportUser(ME)
+        ? `<div class="muted">Poslední přihlášení: <b>${lastLoginTs? new Date(lastLoginTs).toLocaleString() : '—'}</b></div>`
+        : '';
+      return `
     <div class="card">
       <div class="row" style="justify-content:space-between">
         <div>
           <div><b>${u.name}</b> <span class="muted">(${u.isActive?'aktivní':'deaktivován'})</span></div>
+          ${lastLoginLine}
           <div class="muted">Role: ${roleChips(u)}</div>
         </div>
         ${isPrivileged()?`
@@ -836,7 +838,7 @@ function viewMembers(){
           <div class="grid3">
             <label>Jméno<input class="input" id="un_${u.id}" value="${u.name}" /></label>
             <label>Heslo (viditelné)<input class="input" id="up_${u.id}" value="${u.password||''}" /></label>
-            <label>Aktivní<input type="checkbox" id="ua_${u.id}" ${u.isActive?'checked':''} /></label>
+            <label class="row" style="gap:6px">Aktivní <input type="checkbox" id="ua_${u.id}" ${u.isActive?'checked':''} /></label>
           </div>
           <div class="grid3" style="margin-top:8px">
             <div>
@@ -849,7 +851,8 @@ function viewMembers(){
             <button class="btn primary" type="button" onclick="saveUserInline('${u.id}')">Uložit změny</button>
           </div>
         </div>`:''}
-    </div>`).join('');
+    </div>`;
+    }).join('');
 
   const addBox = isPrivileged()?`
     <div class="card" style="margin-top:12px">
@@ -973,7 +976,7 @@ async function addRole(){
   viewRoles();
 }
 
-/* ===== Aktivita + Export ===== */
+/* ===== Aktivita + Export + Loginy ===== */
 function viewActivity(){
   CURRENT_VIEW='activity';
   const list=(ACTIVITY||[]).slice(-200).reverse().map(a=>{
@@ -982,6 +985,54 @@ function viewActivity(){
   }).join('');
   $('#app').innerHTML=`<h3>Aktivita</h3><div class="card"><ul class="list-plain">${list||'<li class="muted">Žádná aktivita.</li>'}</ul></div>`;
 }
+
+function viewLogins(){
+  if(!isSupportUser(ME)){ CURRENT_VIEW='events'; viewEvents(); return; }
+  CURRENT_VIEW='logins';
+
+  // Poslední login per user
+  const perUser = USERS
+    .filter(u=>canSeeUser(u) || isSupportUser(ME)) // Podpora vidí všechny
+    .map(u=>({ u, ts:lastLoginTsForUser(u.id) }))
+    .sort((a,b)=> (b.ts||0)-(a.ts||0));
+
+  const tableRows = perUser.map(x=>`
+    <tr>
+      <td>${h(x.u.name)}</td>
+      <td>${x.u.isActive? '✅ aktivní':'⛔ deaktivován'}</td>
+      <td>${x.ts? new Date(x.ts).toLocaleString() : '—'}</td>
+    </tr>
+  `).join('');
+
+  // Poslední jednotlivé loginy (timeline)
+  const recent = (ACTIVITY||[])
+    .filter(a=>a.type==='login')
+    .slice(-200)
+    .reverse()
+    .map(a=>{
+      const ts=new Date(a.ts).toLocaleString();
+      const who=a.userName || a.userId || 'uživatel';
+      return `<li>${ts}: <b>${h(who)}</b></li>`;
+    }).join('') || '<li class="muted">Zatím žádné loginy.</li>';
+
+  $('#app').innerHTML=`
+    <h3>Loginy</h3>
+    <div class="card">
+      <h4>Poslední přihlášení podle uživatele</h4>
+      <div style="overflow:auto">
+        <table class="table">
+          <thead><tr><th>Uživatel</th><th>Stav</th><th>Poslední přihlášení</th></tr></thead>
+          <tbody>${tableRows}</tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card" style="margin-top:12px">
+      <h4>Chronologicky (posledních 200 přihlášení)</h4>
+      <ul class="list-plain">${recent}</ul>
+    </div>
+  `;
+}
+
 function viewExport(){
   if(!isSupportUser(ME)){ CURRENT_VIEW='events'; viewEvents(); return; }
   CURRENT_VIEW='export';
@@ -1001,7 +1052,7 @@ function renderApp(){
       if(sid){ const u=getUserById(sid); if(u && u.isActive!==false){ ME=u; ensureActiveRole(); } else localStorage.removeItem(DB_SESSION); }
     }
     if(!ME){ viewLogin(); return; }
-    if(CURRENT_VIEW==='export' && !isSupportUser(ME)) CURRENT_VIEW='events';
+    if((CURRENT_VIEW==='export' || CURRENT_VIEW==='logins') && !isSupportUser(ME)) CURRENT_VIEW='events';
 
     switch(CURRENT_VIEW){
       case 'create': viewCreateEvent(CURRENT_EDIT_ID); break;
@@ -1010,6 +1061,7 @@ function renderApp(){
       case 'activity': viewActivity(); break;
       case 'past': viewPastEvents(); break;
       case 'export': viewExport(); break;
+      case 'logins': viewLogins(); break;
       default: viewEvents();
     }
   }catch(e){
@@ -1028,6 +1080,7 @@ window.viewMembers=viewMembers;
 window.viewRoles=viewRoles;
 window.viewActivity=viewActivity;
 window.viewExport=viewExport;
+window.viewLogins=viewLogins;
 window.joinEvent=joinEvent;
 window.leaveEvent=leaveEvent;
 window.assignMember=assignMember;
