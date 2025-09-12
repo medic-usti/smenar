@@ -241,10 +241,15 @@ async function logActivity(type, eventId, eventTitle, detail){
   await kvSave(DB_ACTIVITY, ACTIVITY);
 }
 
-/* >>> Pomocné funkce pro loginy <<< */
+/* >>> Pomocné funkce pro loginy/odhlášení <<< */
 function lastLoginTsForUser(uid){
   let ts=0;
   for(const a of ACTIVITY){ if(a.userId===uid && a.type==='login' && a.ts>ts) ts=a.ts; }
+  return ts||null;
+}
+function lastLogoutTsForUser(uid){
+  let ts=0;
+  for(const a of ACTIVITY){ if(a.userId===uid && a.type==='logout' && a.ts>ts) ts=a.ts; }
   return ts||null;
 }
 
@@ -313,7 +318,7 @@ function viewLogin(){
     const u=(USERS||[]).find(x=>x.name===n && x.password===p && x.isActive!==false);
     if(!u){ alert('Neplatné údaje'); return; }
     ME=u; localStorage.setItem(DB_SESSION, ME.id); ensureActiveRole();
-    // >>> zapiš login do aktivity
+    // loguj přihlášení
     await logActivity('login', null, null, 'uživatel se přihlásil');
     CURRENT_VIEW='events'; CURRENT_EDIT_ID=null;
     renderApp();
@@ -815,8 +820,12 @@ function viewMembers(){
     .filter(canSeeUser)
     .map(u=>{
       const lastLoginTs = lastLoginTsForUser(u.id);
+      const lastLogoutTs = lastLogoutTsForUser(u.id);
       const lastLoginLine = isSupportUser(ME)
         ? `<div class="muted">Poslední přihlášení: <b>${lastLoginTs? new Date(lastLoginTs).toLocaleString() : '—'}</b></div>`
+        : '';
+      const lastLogoutLine = isSupportUser(ME)
+        ? `<div class="muted">Poslední odhlášení: <b>${lastLogoutTs? new Date(lastLogoutTs).toLocaleString() : '—'}</b></div>`
         : '';
       return `
     <div class="card">
@@ -824,6 +833,7 @@ function viewMembers(){
         <div>
           <div><b>${u.name}</b> <span class="muted">(${u.isActive?'aktivní':'deaktivován'})</span></div>
           ${lastLoginLine}
+          ${lastLogoutLine}
           <div class="muted">Role: ${roleChips(u)}</div>
         </div>
         ${isPrivileged()?`
@@ -990,44 +1000,45 @@ function viewLogins(){
   if(!isSupportUser(ME)){ CURRENT_VIEW='events'; viewEvents(); return; }
   CURRENT_VIEW='logins';
 
-  // Poslední login per user
+  // Poslední login/logout per user
   const perUser = USERS
-    .filter(u=>canSeeUser(u) || isSupportUser(ME)) // Podpora vidí všechny
-    .map(u=>({ u, ts:lastLoginTsForUser(u.id) }))
-    .sort((a,b)=> (b.ts||0)-(a.ts||0));
+    .filter(u=>canSeeUser(u) || isSupportUser(ME))
+    .map(u=>({ u, li:lastLoginTsForUser(u.id), lo:lastLogoutTsForUser(u.id) }))
+    .sort((a,b)=> (b.li||0)-(a.li||0));
 
   const tableRows = perUser.map(x=>`
     <tr>
       <td>${h(x.u.name)}</td>
       <td>${x.u.isActive? '✅ aktivní':'⛔ deaktivován'}</td>
-      <td>${x.ts? new Date(x.ts).toLocaleString() : '—'}</td>
+      <td>${x.li? new Date(x.li).toLocaleString() : '—'}</td>
+      <td>${x.lo? new Date(x.lo).toLocaleString() : '—'}</td>
     </tr>
   `).join('');
 
-  // Poslední jednotlivé loginy (timeline)
+  // Poslední jednotlivé login/logout události (timeline)
   const recent = (ACTIVITY||[])
-    .filter(a=>a.type==='login')
+    .filter(a=>a.type==='login' || a.type==='logout')
     .slice(-200)
     .reverse()
     .map(a=>{
       const ts=new Date(a.ts).toLocaleString();
       const who=a.userName || a.userId || 'uživatel';
-      return `<li>${ts}: <b>${h(who)}</b></li>`;
-    }).join('') || '<li class="muted">Zatím žádné loginy.</li>';
+      return `<li>${ts}: <b>${h(who)}</b> — ${a.type}</li>`;
+    }).join('') || '<li class="muted">Zatím žádné loginy/odhlášení.</li>';
 
   $('#app').innerHTML=`
     <h3>Loginy</h3>
     <div class="card">
-      <h4>Poslední přihlášení podle uživatele</h4>
+      <h4>Poslední přihlášení / odhlášení podle uživatele</h4>
       <div style="overflow:auto">
         <table class="table">
-          <thead><tr><th>Uživatel</th><th>Stav</th><th>Poslední přihlášení</th></tr></thead>
+          <thead><tr><th>Uživatel</th><th>Stav</th><th>Poslední přihlášení</th><th>Poslední odhlášení</th></tr></thead>
           <tbody>${tableRows}</tbody>
         </table>
       </div>
     </div>
     <div class="card" style="margin-top:12px">
-      <h4>Chronologicky (posledních 200 přihlášení)</h4>
+      <h4>Chronologicky (posledních 200 událostí)</h4>
       <ul class="list-plain">${recent}</ul>
     </div>
   `;
@@ -1102,7 +1113,10 @@ window.addRole=addRole;
 
 window.downloadJson = downloadJson;
 
-function logout(){
+// >>> odhlášení loguje 'logout'
+async function logout(){
+  // zaloguj ještě s aktuálním ME
+  await logActivity('logout', null, null, 'uživatel se odhlásil');
   localStorage.removeItem(DB_SESSION);
   ME=null; ACTIVE_ROLE=null;
   CURRENT_VIEW='events'; CURRENT_EDIT_ID=null;
