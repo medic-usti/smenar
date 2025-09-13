@@ -83,8 +83,8 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 /* ===== Stav ===== */
-const DB_USERS="users", DB_ACTIONS="actions", DB_ROLES="roles", DB_SESSION="session", DB_ACTIVITY="activity", DB_ARCHIVE="archive";
-let USERS=[], ACTIONS=[], ROLES=[], ACTIVITY=[], ARCHIVE=[];
+const DB_USERS="users", DB_ACTIONS="actions", DB_ROLES="roles", DB_SESSION="session", DB_ACTIVITY="activity", DB_ARCHIVE="archive", DB_FORCED="forced";
+let USERS=[], ACTIONS=[], ROLES=[], ACTIVITY=[], ARCHIVE=[], FORCED=[];
 let ME=null, ACTIVE_ROLE=null;
 let CURRENT_VIEW='events', CURRENT_EDIT_ID=null;
 let DB_ONLINE=false, DB_LAST_TS=0, DB_LAST_SRC='—';
@@ -123,10 +123,10 @@ function subscribeRealtime(){
   supabase
     .channel('kv-realtime')
     .on('postgres_changes', { event:'*', schema:'public', table:'kv',
-      filter:"key=in.(users,roles,actions,archive,activity)" }, (payload)=>{
+      filter:"key=in.(users,roles,actions,archive,activity,forced)" }, (payload)=>{
         const row=payload.new || payload.old;
         if(!row?.key) return;
-        if(CURRENT_VIEW==='create' || CURRENT_VIEW==='login') return; // pauza na formulářích
+        if(CURRENT_VIEW==='create' || CURRENT_VIEW==='login') return;
         const arr=row.data||[];
         switch(row.key){
           case DB_USERS:USERS=arr;break;
@@ -134,10 +134,12 @@ function subscribeRealtime(){
           case DB_ACTIONS:ACTIONS=arr;break;
           case DB_ARCHIVE:ARCHIVE=arr;break;
           case DB_ACTIVITY:ACTIVITY=arr;break;
+          case DB_FORCED:FORCED=arr;break;
         }
         DB_ONLINE=true; DB_LAST_TS=Date.now(); DB_LAST_SRC='realtime';
         _lastRealtime=Date.now();
         renderApp();
+        checkForcedLogout(); // okamžitě po realtime ticku
     }).subscribe(st=>{
       DB_ONLINE=(st==='SUBSCRIBED'); DB_LAST_TS=Date.now(); DB_LAST_SRC='sub'; _lastRealtime=Date.now();
     });
@@ -154,14 +156,17 @@ function subscribeRealtime(){
 const _eq=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
 async function refreshFromDB(){
   try{
-    const [u,r,a,ar,ac]=await Promise.all([kvLoad(DB_USERS),kvLoad(DB_ROLES),kvLoad(DB_ACTIONS),kvLoad(DB_ARCHIVE),kvLoad(DB_ACTIVITY)]);
+    const [u,r,a,ar,ac,fo]=await Promise.all([
+      kvLoad(DB_USERS),kvLoad(DB_ROLES),kvLoad(DB_ACTIONS),kvLoad(DB_ARCHIVE),kvLoad(DB_ACTIVITY),kvLoad(DB_FORCED)
+    ]);
     let changed=false;
     if(!_eq(USERS,u)){USERS=u;changed=true;}
     if(!_eq(ROLES,r)){ROLES=r;changed=true;}
     if(!_eq(ACTIONS,a)){ACTIONS=a;changed=true;}
     if(!_eq(ARCHIVE,ar)){ARCHIVE=ar;changed=true;}
     if(!_eq(ACTIVITY,ac)){ACTIVITY=ac;changed=true;}
-    if(changed){ DB_ONLINE=true; DB_LAST_TS=Date.now(); DB_LAST_SRC='fallback'; renderApp(); }
+    if(!_eq(FORCED,fo)){FORCED=fo;changed=true;}
+    if(changed){ DB_ONLINE=true; DB_LAST_TS=Date.now(); DB_LAST_SRC='fallback'; renderApp(); checkForcedLogout(); }
   }catch(err){
     console.warn('fallback refresh error',err);
     DB_ONLINE=false; DB_LAST_TS=Date.now(); DB_LAST_SRC='fallback-error';
@@ -193,6 +198,7 @@ async function seedIfEmpty(){
 
   if(!ARCHIVE.length){ await kvSave(DB_ARCHIVE,[]); changed=true; }
   if(!ACTIVITY.length){ await kvSave(DB_ACTIVITY,[]); changed=true; }
+  if(!FORCED.length){ await kvSave(DB_FORCED,[]); changed=true; }
 
   if(changed){ DB_LAST_SRC='seed'; DB_LAST_TS=Date.now(); }
 }
@@ -211,11 +217,14 @@ async function ensureCoreRoles(){
 }
 async function init(){
   try{
-    [USERS,ROLES,ACTIONS,ARCHIVE,ACTIVITY]=await Promise.all([kvLoad(DB_USERS),kvLoad(DB_ROLES),kvLoad(DB_ACTIONS),kvLoad(DB_ARCHIVE),kvLoad(DB_ACTIVITY)]);
+    [USERS,ROLES,ACTIONS,ARCHIVE,ACTIVITY,FORCED]=await Promise.all([
+      kvLoad(DB_USERS),kvLoad(DB_ROLES),kvLoad(DB_ACTIONS),kvLoad(DB_ARCHIVE),kvLoad(DB_ACTIVITY),kvLoad(DB_FORCED)
+    ]);
     DB_ONLINE=true; DB_LAST_TS=Date.now(); DB_LAST_SRC='init';
     await seedIfEmpty(); await ensureCoreRoles();
     subscribeRealtime();
     renderApp();
+    checkForcedLogout(); // pro jistotu hned po initu
   }catch(e){
     showErr('Chyba připojení k DB: '+(e.message||e));
     DB_ONLINE=false; DB_LAST_TS=Date.now(); DB_LAST_SRC='error';
@@ -258,6 +267,26 @@ function isUserCurrentlyLogged(uid){
   const logged = !!li && (!lo || li > lo);
   return { logged, since: logged ? li : null };
 }
+
+/* ===== Force logout klienta ===== */
+let LAST_FORCED_TS = parseInt(localStorage.getItem('lastForcedTs')||'0',10);
+function latestForcedFor(uid){
+  const hits = (FORCED||[]).filter(f=>f && f.uid===uid);
+  if(!hits.length) return 0;
+  return Math.max(...hits.map(f=>parseInt(f.ts||0,10)).filter(n=>!isNaN(n)));
+}
+function checkForcedLogout(){
+  if(!ME) return;
+  const ts = latestForcedFor(ME.id);
+  if(ts>LAST_FORCED_TS){
+    LAST_FORCED_TS = ts;
+    localStorage.setItem('lastForcedTs', String(LAST_FORCED_TS));
+    alert('Byl jste odhlášen podporou.');
+    logout();
+  }
+}
+// pojistka i bez realtime
+setInterval(checkForcedLogout, 3000);
 
 /* ===== Event helpers ===== */
 function safeHHMM(s){ return /^\d{2}:\d{2}$/.test(s||'')?s:''; }
@@ -999,7 +1028,6 @@ async function addRole(){
 /* ===== Aktivita + Export + Loginy ===== */
 function viewActivity(){
   CURRENT_VIEW='activity';
-
   const src = isSupportUser(ME)
     ? (ACTIVITY || [])
     : (ACTIVITY || []).filter(a => a.type !== 'login' && a.type !== 'logout');
@@ -1017,14 +1045,15 @@ function viewActivity(){
 }
 window.viewActivity=viewActivity;
 
-/* === Manuální odhlášení v Loginy (jen Podpora) === */
+/* === Manuální odhlášení (vytváří i force logout) === */
 async function adminLogoutUser(uid){
   if(!isSupportUser(ME)) return;
   const u = getUserById(uid);
   if(!u){ toast('Uživatel nenalezen'); return; }
 
+  const ts = Date.now();
   ACTIVITY.push({
-    ts: Date.now(),
+    ts,
     type: 'logout',
     eventId: null,
     eventTitle: null,
@@ -1032,7 +1061,11 @@ async function adminLogoutUser(uid){
     userId: u.id,
     userName: u.name
   });
+  // Přidej záznam do forced
+  FORCED.push({ uid: u.id, ts, reason: 'support' });
   await kvSave(DB_ACTIVITY, ACTIVITY);
+  await kvSave(DB_FORCED, FORCED);
+
   toast('Uživatel odhlášen', u.name);
   viewLogins();
 }
@@ -1040,10 +1073,7 @@ async function adminLogoutAll(){
   if(!isSupportUser(ME)) return;
 
   const targets = USERS.filter(u => isUserCurrentlyLogged(u.id).logged);
-  if(!targets.length){
-    toast('Nikdo není aktuálně přihlášen'); 
-    return;
-  }
+  if(!targets.length){ toast('Nikdo není aktuálně přihlášen'); return; }
 
   const ts = Date.now();
   for(const u of targets){
@@ -1056,8 +1086,11 @@ async function adminLogoutAll(){
       userId: u.id,
       userName: u.name
     });
+    FORCED.push({ uid: u.id, ts, reason: 'support-all' });
   }
   await kvSave(DB_ACTIVITY, ACTIVITY);
+  await kvSave(DB_FORCED, FORCED);
+
   toast('Odhlášeni všichni přihlášení', `${targets.length} uživ.`);
   viewLogins();
 }
@@ -1148,7 +1181,7 @@ function viewExport(){
   $('#app').innerHTML=`<h3>Export / Záloha</h3><div class="card"><div class="row"><button class="btn" type="button" onclick="downloadJson()">Stáhnout JSON</button></div></div>`;
 }
 function downloadJson(){
-  const data={users:USERS,roles:ROLES,actions:ACTIONS,archive:ARCHIVE,activity:ACTIVITY};
+  const data={users:USERS,roles:ROLES,actions:ACTIONS,archive:ARCHIVE,activity:ACTIVITY,forced:FORCED};
   const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='smenar_backup.json'; a.click();
 }
 
@@ -1277,7 +1310,7 @@ window.adminLogoutAll  = adminLogoutAll;
 
 /* ===== Auto logout (30 min) ===== */
 let autoLogoutTimer = null;
-const AUTO_LOGOUT_MS = 30 * 60 * 1000; // 30 minut
+const AUTO_LOGOUT_MS = 30 * 60 * 1000;
 
 function resetAutoLogoutTimer(){
   if(autoLogoutTimer) clearTimeout(autoLogoutTimer);
@@ -1288,6 +1321,8 @@ function resetAutoLogoutTimer(){
     }, AUTO_LOGOUT_MS);
   }
 }
+
+// Reset při každé akci uživatele
 ['click','keydown','mousemove','scroll','touchstart'].forEach(ev=>{
   window.addEventListener(ev, resetAutoLogoutTimer, true);
 });
