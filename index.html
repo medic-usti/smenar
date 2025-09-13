@@ -1108,28 +1108,35 @@ function viewPassword(){
     <div class="card" style="max-width:520px">
       <div class="grid2">
         <label>Současné heslo
-          <div class="row" style="gap:6px">
-            <input id="pw_current" class="input" type="password" value="${h(ME.password||'')}" readonly>
-            <button class="btn" type="button" onclick="(function(){
-              const i=document.getElementById('pw_current');
-              i.type = (i.type==='password' ? 'text' : 'password');
-            })()">👁️</button>
-          </div>
+          <input id="pw_current" class="input" type="password" value="${h(ME.password||'')}" readonly>
         </label>
         <label>Nové heslo
           <input id="pw_new" class="input" type="password" placeholder="Zadejte nové heslo">
         </label>
       </div>
-      <div class="row" style="justify-content:flex-end;margin-top:12px">
-        <button class="btn" type="button" onclick="viewEvents()">Zpět</button>
-        <button class="btn primary" type="button" onclick="saveMyPassword()">Uložit</button>
+
+      <div class="row" style="justify-content:space-between;margin-top:8px">
+        <button class="btn" type="button" onclick="(function(){
+          const c=document.getElementById('pw_current');
+          const n=document.getElementById('pw_new');
+          const show = (c.type==='password'); // pokud jsou skryté, přepnout na text
+          c.type = show ? 'text' : 'password';
+          n.type = show ? 'text' : 'password';
+        })()">👁️ Zobrazit/skrýt obě</button>
+
+        <div class="row" style="gap:8px">
+          <button class="btn" type="button" onclick="viewEvents()">Zpět</button>
+          <button class="btn primary" type="button" onclick="saveMyPassword()">Uložit</button>
+        </div>
       </div>
+
       <div class="muted small" style="margin-top:8px">
         Tip: zvolte si silné heslo (alespoň 6 znaků).
       </div>
     </div>
   `;
 }
+
 async function saveMyPassword(){
   if(!ME) return;
   const newPw = (document.getElementById('pw_new')?.value||'').trim();
