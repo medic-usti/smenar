@@ -1022,6 +1022,129 @@ function viewLogins(){
   if(!isSupportUser(ME)){ CURRENT_VIEW='events'; viewEvents(); return; }
   CURRENT_VIEW='logins';
 
+  const perUser = USERS
+    .filter(u=>canSeeUser(u) || isSupportUser(ME))
+    .map(u=>{
+      const li = lastLoginTsForUser(u.id);
+      const lo = lastLogoutTsForUser(u.id);
+      const { logged, since } = isUserCurrentlyLogged(u.id);
+      return { u, li, lo, logged, since };
+    })
+    .sort((a,b)=>{
+      if (a.logged !== b.logged) return a.logged ? -1 : 1;
+      return (b.li||0) - (a.li||0);
+    });
+
+  const tableRows = perUser.map(x=>{
+    const loggedBadge = x.logged
+      ? `✅ Ano${x.since ? ` <span class="muted small">(od ${new Date(x.since).toLocaleString()})</span>` : ''}`
+      : '❌ Ne';
+    const actionBtn = x.logged
+      ? `<button class="btn danger" type="button" onclick="adminLogoutUser('${x.u.id}')">Odhlásit</button>`
+      : `<span class="muted">—</span>`;
+    return `
+      <tr>
+        <td>${h(x.u.name)}</td>
+        <td>${x.u.isActive? '✅ aktivní':'⛔ deaktivován'}</td>
+        <td>${x.li? new Date(x.li).toLocaleString() : '—'}</td>
+        <td>${x.lo? new Date(x.lo).toLocaleString() : '—'}</td>
+        <td>${loggedBadge}</td>
+        <td>${actionBtn}</td>
+      </tr>
+    `;
+  }).join('');
+
+  const recent = (ACTIVITY||[])
+    .filter(a=>a.type==='login' || a.type==='logout')
+    .slice(-200)
+    .reverse()
+    .map(a=>{
+      const ts=new Date(a.ts).toLocaleString();
+      const who=a.userName || a.userId || 'uživatel';
+      const det=a.detail? ` — <span class="muted small">${h(a.detail)}</span>` : '';
+      return `<li>${ts}: <b>${h(who)}</b> — ${a.type}${det}</li>`;
+    }).join('') || '<li class="muted">Zatím žádné loginy/odhlášení.</li>';
+
+  $('#app').innerHTML=`
+    <h3>Loginy</h3>
+
+    <div class="card" style="margin-bottom:12px">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <h4 style="margin:0">Poslední přihlášení / odhlášení podle uživatele</h4>
+        <button class="btn danger" type="button" onclick="adminLogoutAll()">Odhlásit všechny</button>
+      </div>
+      <div style="overflow:auto; margin-top:8px">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Uživatel</th>
+              <th>Stav</th>
+              <th>Poslední přihlášení</th>
+              <th>Poslední odhlášení</th>
+              <th>Přihlášen?</th>
+              <th>Akce</th>
+            </tr>
+          </thead>
+          <tbody>${tableRows}</tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <h4>Chronologicky (posledních 200 událostí)</h4>
+      <ul class="list-plain">${recent}</ul>
+    </div>
+  `;
+}
+
+
+// === Manuální odhlašování v Loginy (jen Podpora) ===
+async function adminLogoutUser(uid){
+  if(!isSupportUser(ME)) return;
+  const u = getUserById(uid);
+  if(!u){ toast('Uživatel nenalezen'); return; }
+
+  // zapíšeme odhlášení přímo za daného uživatele
+  ACTIVITY.push({
+    ts: Date.now(),
+    type: 'logout',
+    eventId: null,
+    eventTitle: null,
+    detail: 'manuální odhlášení (Podpora)',
+    userId: u.id,
+    userName: u.name
+  });
+  await kvSave(DB_ACTIVITY, ACTIVITY);
+  toast('Uživatel odhlášen', u.name);
+  viewLogins();
+}
+
+async function adminLogoutAll(){
+  if(!isSupportUser(ME)) return;
+
+  const targets = USERS.filter(u => isUserCurrentlyLogged(u.id).logged);
+  if(!targets.length){
+    toast('Nikdo není aktuálně přihlášen'); 
+    return;
+  }
+
+  const ts = Date.now();
+  for(const u of targets){
+    ACTIVITY.push({
+      ts,
+      type: 'logout',
+      eventId: null,
+      eventTitle: null,
+      detail: 'hromadné manuální odhlášení (Podpora)',
+      userId: u.id,
+      userName: u.name
+    });
+  }
+  await kvSave(DB_ACTIVITY, ACTIVITY);
+  toast('Odhlášeni všichni přihlášení', `${targets.length} uživ.`);
+  viewLogins();
+}
+
   // Poslední login/logout + stav přihlášení per user
   const perUser = USERS
     .filter(u=>canSeeUser(u) || isSupportUser(ME))
@@ -1217,6 +1340,9 @@ window.editRoleOpen=editRoleOpen;
 window.saveRole=saveRole;
 window.deleteRole=deleteRole;
 window.addRole=addRole;
+
+window.adminLogoutUser = adminLogoutUser;
+window.adminLogoutAll  = adminLogoutAll;
 
 window.downloadJson = downloadJson;
 /* ===== Auto logout (30 min) ===== */
