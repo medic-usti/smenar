@@ -1179,6 +1179,9 @@ function renderApp(){
       case 'password': viewPassword(); break;
       default: viewEvents();
     }
+    
+    // ⬅️ po renderu a přihlášení resetujeme autologout timer
+    if(ME) resetAutoLogoutTimer();
   }catch(e){
     showErr('Render error: '+(e.message||e));
   }
@@ -1216,6 +1219,24 @@ window.deleteRole=deleteRole;
 window.addRole=addRole;
 
 window.downloadJson = downloadJson;
+/* ===== Auto logout (30 min) ===== */
+let autoLogoutTimer = null;
+const AUTO_LOGOUT_MS = 30 * 60 * 1000; // 30 minut
+
+function resetAutoLogoutTimer(){
+  if(autoLogoutTimer) clearTimeout(autoLogoutTimer);
+  if(ME){ // jen když je někdo přihlášen
+    autoLogoutTimer = setTimeout(()=>{
+      alert("Byl jste automaticky odhlášen po 30 minutách nečinnosti.");
+      logout();
+    }, AUTO_LOGOUT_MS);
+  }
+}
+
+// Reset při každé akci uživatele
+['click','keydown','mousemove','scroll','touchstart'].forEach(ev=>{
+  window.addEventListener(ev, resetAutoLogoutTimer, true);
+});
 
 // logout loguje 'logout'
 async function logout(){
@@ -1227,6 +1248,7 @@ async function logout(){
   viewLogin();
 }
 window.logout=logout;
+ 
   </script>
 </body>
 </html>
