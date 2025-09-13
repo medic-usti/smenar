@@ -241,7 +241,7 @@ async function logActivity(type, eventId, eventTitle, detail){
   await kvSave(DB_ACTIVITY, ACTIVITY);
 }
 
-/* >>> Pomocné funkce pro loginy/odhlášení <<< */
+/* >>> Login/Logout helpery <<< */
 function lastLoginTsForUser(uid){
   let ts=0;
   for(const a of ACTIVITY){ if(a.userId===uid && a.type==='login' && a.ts>ts) ts=a.ts; }
@@ -252,13 +252,12 @@ function lastLogoutTsForUser(uid){
   for(const a of ACTIVITY){ if(a.userId===uid && a.type==='logout' && a.ts>ts) ts=a.ts; }
   return ts||null;
 }
-    function isUserCurrentlyLogged(uid){
+function isUserCurrentlyLogged(uid){
   const li = lastLoginTsForUser(uid);
   const lo = lastLogoutTsForUser(uid);
   const logged = !!li && (!lo || li > lo);
   return { logged, since: logged ? li : null };
 }
-
 
 /* ===== Event helpers ===== */
 function safeHHMM(s){ return /^\d{2}:\d{2}$/.test(s||'')?s:''; }
@@ -279,6 +278,7 @@ function renderHeader(){
     <div class="row">
       <button class="btn" type="button" onclick="viewEvents()">Události</button>
       <button class="btn" type="button" onclick="viewPastEvents()">Proběhlé</button>
+      <button class="btn" type="button" onclick="viewPassword()">Změna hesla</button>
     </div>`;
 
   el.innerHTML=`
@@ -287,25 +287,23 @@ function renderHeader(){
       ${roleSel}
       ${publicNav}
       ${isPrivileged()? `
-  <div class="menu" id="adminMenu">
-    <button class="btn" id="adminBtn" type="button">Admin ▾</button>
-    <div class="dropdown">
-      <button type="button" onclick="viewEvents()">Události</button>
-      <button type="button" onclick="viewPastEvents()">Proběhlé akce</button>
-      <button type="button" onclick="viewMembers()">Členové</button>
-      <button type="button" onclick="viewRoles()">Role</button>
+        <div class="menu" id="adminMenu">
+          <button class="btn" id="adminBtn" type="button">Admin ▾</button>
+          <div class="dropdown">
+            <button type="button" onclick="viewEvents()">Události</button>
+            <button type="button" onclick="viewPastEvents()">Proběhlé akce</button>
+            <button type="button" onclick="viewMembers()">Členové</button>
+            <button type="button" onclick="viewRoles()">Role</button>
 
-      ${isSupportUser(ME) ? `
-        <button type="button" onclick="viewLogins()">Loginy</button>
-        <button type="button" onclick="viewActivity()">Aktivita</button>
-      ` : ''}
+            ${isSupportUser(ME) ? `
+              <button type="button" onclick="viewLogins()">Loginy</button>
+              <button type="button" onclick="viewActivity()">Aktivita</button>
+            ` : ''}
 
-      <button type="button" onclick="viewCreateEvent()">Nová událost</button>
-      ${isSupportUser(ME)?`<button type="button" onclick="viewExport()">Export / Záloha</button>`:''}
-    </div>
-  </div>` : '' }
-
-
+            <button type="button" onclick="viewCreateEvent()">Nová událost</button>
+            ${isSupportUser(ME)?`<button type="button" onclick="viewExport()">Export / Záloha</button>`:''}
+          </div>
+        </div>`:''}
       <button class="btn" type="button" onclick="logout()">Odhlásit</button>
     </div>`;
   const sel=document.getElementById('selActiveRole'); if(sel) sel.onchange=()=>{ ACTIVE_ROLE=sel.value; renderApp(); };
@@ -331,7 +329,6 @@ function viewLogin(){
     const u=(USERS||[]).find(x=>x.name===n && x.password===p && x.isActive!==false);
     if(!u){ alert('Neplatné údaje'); return; }
     ME=u; localStorage.setItem(DB_SESSION, ME.id); ensureActiveRole();
-    // loguj přihlášení
     await logActivity('login', null, null, 'uživatel se přihlásil');
     CURRENT_VIEW='events'; CURRENT_EDIT_ID=null;
     renderApp();
@@ -743,8 +740,8 @@ function viewPastEvents(){
 /* ===== Členové ===== */
 async function toggleUserRole(uid, roleKey, on){
   const u=getUserById(uid); if(!u) return;
-  if (roleKey==='admin' && !isSupportUser(ME)) return;   // admin roli mění jen Podpora
-  if (roleKey==='support') return;                        // support se nepřiřazuje
+  if (roleKey==='admin' && !isSupportUser(ME)) return;
+  if (roleKey==='support') return;
   if(!isSupportUser(ME) && userHasRole(u,'support')) return;
 
   u.roles=u.roles||[];
@@ -1000,36 +997,26 @@ async function addRole(){
 }
 
 /* ===== Aktivita + Export + Loginy ===== */
-// ===== Aktivita (admin NEvidí login/logout; Podpora je vidí) =====
 function viewActivity(){
-  CURRENT_VIEW = 'activity';
+  CURRENT_VIEW='activity';
 
-  // Admini: skryj login/logout; Podpora: zobraz vše
-  const items = (ACTIVITY || []).filter(a => {
-    if (isSupportUser(ME)) return true;    // Podpora vidí vše
-    return a.type !== 'login' && a.type !== 'logout';
-  });
+  // Admin NEvidí login/logout; Podpora vidí vše
+  const src = isSupportUser(ME)
+    ? (ACTIVITY || [])
+    : (ACTIVITY || []).filter(a => a.type !== 'login' && a.type !== 'logout');
 
-  const list = items
+  const list = src
     .slice(-200)
     .reverse()
-    .map(a => {
-      const ts = new Date(a.ts).toLocaleString();
-      return `<li>${ts}: <b>${a.userName || a.userId || 'uživatel'}</b> — ${a.type} ${a.eventTitle ? '('+a.eventTitle+')' : ''} ${a.detail ? '— '+a.detail : ''}</li>`;
+    .map(a=>{
+      const ts=new Date(a.ts).toLocaleString();
+      return `<li>${ts}: <b>${a.userName||a.userId||'uživatel'}</b> — ${a.type} ${a.eventTitle?('('+a.eventTitle+')'):''} ${a.detail?('— '+a.detail):''}</li>`;
     })
     .join('') || '<li class="muted">Žádná aktivita.</li>';
 
-  $('#app').innerHTML = `
-    <h3>Aktivita</h3>
-    <div class="card">
-      <ul class="list-plain">${list}</ul>
-    </div>`;
+  $('#app').innerHTML=`<h3>Aktivita</h3><div class="card"><ul class="list-plain">${list}</ul></div>`;
 }
-
-// zajistí, že se volá správná verze:
-window.viewActivity = viewActivity;
-
-
+window.viewActivity=viewActivity;
 
 function viewLogins(){
   if(!isSupportUser(ME)){ CURRENT_VIEW='events'; viewEvents(); return; }
@@ -1044,10 +1031,9 @@ function viewLogins(){
       const { logged, since } = isUserCurrentlyLogged(u.id);
       return { u, li, lo, logged, since };
     })
-    // seřadit nejdřív podle toho, kdo je právě přihlášen, pak podle data posledního loginu
     .sort((a,b)=>{
-      if (a.logged !== b.logged) return a.logged ? -1 : 1;
-      return (b.li||0) - (a.li||0);
+      if (a.logged !== b.logged) return a.logged ? -1 : 1;   // kdo je přihlášen, je nahoře
+      return (b.li||0) - (a.li||0);                           // pak podle času posledního loginu
     });
 
   const tableRows = perUser.map(x=>{
@@ -1065,7 +1051,6 @@ function viewLogins(){
     `;
   }).join('');
 
-  // Chronologická timeline login/logout událostí
   const recent = (ACTIVITY||[])
     .filter(a=>a.type==='login' || a.type==='logout')
     .slice(-200)
@@ -1101,6 +1086,7 @@ function viewLogins(){
     </div>
   `;
 }
+window.viewLogins=viewLogins;
 
 function viewExport(){
   if(!isSupportUser(ME)){ CURRENT_VIEW='events'; viewEvents(); return; }
@@ -1111,6 +1097,58 @@ function downloadJson(){
   const data={users:USERS,roles:ROLES,actions:ACTIONS,archive:ARCHIVE,activity:ACTIVITY};
   const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='smenar_backup.json'; a.click();
 }
+
+/* ===== Změna hesla (pro všechny přihlášené) ===== */
+function viewPassword(){
+  if(!ME){ viewLogin(); return; }
+  CURRENT_VIEW='password';
+  const app = $('#app');
+  app.innerHTML = `
+    <h3>Změna hesla</h3>
+    <div class="card" style="max-width:520px">
+      <div class="grid2">
+        <label>Současné heslo
+          <div class="row" style="gap:6px">
+            <input id="pw_current" class="input" type="password" value="${h(ME.password||'')}" readonly>
+            <button class="btn" type="button" onclick="(function(){
+              const i=document.getElementById('pw_current');
+              i.type = (i.type==='password' ? 'text' : 'password');
+            })()">👁️</button>
+          </div>
+        </label>
+        <label>Nové heslo
+          <input id="pw_new" class="input" type="password" placeholder="Zadejte nové heslo">
+        </label>
+      </div>
+      <div class="row" style="justify-content:flex-end;margin-top:12px">
+        <button class="btn" type="button" onclick="viewEvents()">Zpět</button>
+        <button class="btn primary" type="button" onclick="saveMyPassword()">Uložit</button>
+      </div>
+      <div class="muted small" style="margin-top:8px">
+        Tip: zvolte si silné heslo (alespoň 6 znaků).
+      </div>
+    </div>
+  `;
+}
+async function saveMyPassword(){
+  if(!ME) return;
+  const newPw = (document.getElementById('pw_new')?.value||'').trim();
+  if(!newPw){ alert('Zadejte nové heslo.'); return; }
+  if(newPw.length < 3){ alert('Heslo by mělo mít alespoň 3 znaky.'); return; }
+
+  const u = USERS.find(u=>u.id===ME.id);
+  if(!u) return;
+  u.password = newPw;
+  ME.password = newPw;
+
+  await kvSave(DB_USERS, USERS);
+  toast('Heslo změněno');
+
+  const pwNew = document.getElementById('pw_new');
+  if(pwNew) pwNew.value = '';
+}
+window.viewPassword=viewPassword;
+window.saveMyPassword=saveMyPassword;
 
 /* ===== Router ===== */
 function renderApp(){
@@ -1131,6 +1169,7 @@ function renderApp(){
       case 'past': viewPastEvents(); break;
       case 'export': viewExport(); break;
       case 'logins': viewLogins(); break;
+      case 'password': viewPassword(); break;
       default: viewEvents();
     }
   }catch(e){
@@ -1171,9 +1210,8 @@ window.addRole=addRole;
 
 window.downloadJson = downloadJson;
 
-// >>> odhlášení loguje 'logout'
+// logout loguje 'logout'
 async function logout(){
-  // zaloguj ještě s aktuálním ME
   await logActivity('logout', null, null, 'uživatel se odhlásil');
   localStorage.removeItem(DB_SESSION);
   ME=null; ACTIVE_ROLE=null;
