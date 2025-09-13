@@ -139,7 +139,7 @@ function subscribeRealtime(){
         DB_ONLINE=true; DB_LAST_TS=Date.now(); DB_LAST_SRC='realtime';
         _lastRealtime=Date.now();
         renderApp();
-        checkForcedLogout(); // okamžitě po realtime ticku
+        checkForcedLogout();
     }).subscribe(st=>{
       DB_ONLINE=(st==='SUBSCRIBED'); DB_LAST_TS=Date.now(); DB_LAST_SRC='sub'; _lastRealtime=Date.now();
     });
@@ -224,7 +224,7 @@ async function init(){
     await seedIfEmpty(); await ensureCoreRoles();
     subscribeRealtime();
     renderApp();
-    checkForcedLogout(); // pro jistotu hned po initu
+    checkForcedLogout();
   }catch(e){
     showErr('Chyba připojení k DB: '+(e.message||e));
     DB_ONLINE=false; DB_LAST_TS=Date.now(); DB_LAST_SRC='error';
@@ -285,7 +285,6 @@ function checkForcedLogout(){
     logout();
   }
 }
-// pojistka i bez realtime
 setInterval(checkForcedLogout, 3000);
 
 /* ===== Event helpers ===== */
@@ -295,6 +294,90 @@ function isPastEvent(a){ return nowMs()>eventEndMs(a); }
 function getUnlockMs(a){ if(!a||!a.signupUnlock) return 0; const ms=new Date(a.signupUnlock).getTime(); return isNaN(ms)?0:ms; }
 function sortEvents(a,b){ const A=(a.date||'')+' '+(a.timeFrom||'00:00'); const B=(b.date||'')+' '+(b.timeFrom||'00:00'); return A.localeCompare(B); }
 async function archiveSweep(){ const toMove=(ACTIONS||[]).filter(isPastEvent); if(!toMove.length) return; ACTIONS=ACTIONS.filter(a=>!isPastEvent(a)); await kvSave(DB_ACTIONS,ACTIONS); ARCHIVE=[...toMove.slice().sort(sortEvents).reverse(), ...ARCHIVE]; await kvSave(DB_ARCHIVE,ARCHIVE); }
+
+/* ===== Calendar export helpers ===== */
+function _pad2(n){ return String(n).padStart(2,'0'); }
+// určí start/end; celodenní pokud chybí čas „Od“
+function _calcEventTimes(a){
+  const d = a?.date;
+  const tf = (a?.timeFrom||'').trim();
+  const tt = (a?.timeTo||'').trim();
+  if(!d){
+    const s=new Date(), e=new Date(Date.now()+60*60*1000);
+    return { allday:false, start:s, end:e };
+  }
+  if(!tf){
+    const s = new Date(`${d}T00:00:00`);
+    const e = new Date(`${d}T23:59:59`);
+    return { allday:true, start:s, end:e };
+  }
+  const s = new Date(`${d}T${tf}:00`);
+  let   e = tt ? new Date(`${d}T${tt}:00`) : new Date(s.getTime()+60*60*1000);
+  if(e <= s) e = new Date(s.getTime()+60*60*1000);
+  return { allday:false, start:s, end:e };
+}
+function _toGoogleDates(a){
+  const { allday, start, end } = _calcEventTimes(a);
+  if(allday){
+    const y = start.getFullYear(), m=_pad2(start.getMonth()+1), d=_pad2(start.getDate());
+    return { allday:true, gStart:`${y}${m}${d}`, gEnd:`${y}${m}${d}` };
+  }else{
+    const fmt = (dt)=> dt.getUTCFullYear()+_pad2(dt.getUTCMonth()+1)+_pad2(dt.getUTCDate())
+      +'T'+_pad2(dt.getUTCHours())+_pad2(dt.getUTCMinutes())+_pad2(dt.getUTCSeconds())+'Z';
+    return { allday:false, gStart:fmt(new Date(start)), gEnd:fmt(new Date(end)) };
+  }
+}
+function googleCalUrl(a){
+  const { gStart, gEnd } = _toGoogleDates(a);
+  const params = new URLSearchParams({
+    action: 'TEMPLATE',
+    text: a?.title || 'Událost',
+    dates: `${gStart}/${gEnd}`,
+    location: a?.location || '',
+    details: [
+      a?.notePublic ? `Poznámka: ${a.notePublic}` : '',
+      a?.tech ? `Technika: ${a.tech}` : ''
+    ].filter(Boolean).join('\n')
+  });
+  return 'https://calendar.google.com/calendar/render?'+params.toString();
+}
+function _icsDateUTC(dt){
+  return dt.getUTCFullYear()+_pad2(dt.getUTCMonth()+1)+_pad2(dt.getUTCDate())
+    +'T'+_pad2(dt.getUTCHours())+_pad2(dt.getUTCMinutes())+_pad2(dt.getUTCSeconds())+'Z';
+}
+function _slug(s){ return (s||'udalost').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/-+/g,'-').replace(/^-|-$/g,''); }
+function buildICS(a){
+  const { allday, start, end } = _calcEventTimes(a);
+  const dtstamp = _icsDateUTC(new Date());
+  const uidStr  = `${a.id || uid()}@smenar`;
+  const dtStart = allday ? start.toISOString().slice(0,10).replace(/-/g,'') : _icsDateUTC(start);
+  const dtEnd   = allday ? end.toISOString().slice(0,10).replace(/-/g,'')   : _icsDateUTC(end);
+  const details = [ a.notePublic ? `Poznámka: ${a.notePublic}` : '', a.tech ? `Technika: ${a.tech}` : '' ]
+    .filter(Boolean).join('\\n');
+  const lines = [
+    'BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Smenar//CZ//','CALSCALE:GREGORIAN','METHOD:PUBLISH',
+    'BEGIN:VEVENT',`UID:${uidStr}`,`DTSTAMP:${dtstamp}`,
+    allday ? `DTSTART;VALUE=DATE:${dtStart}` : `DTSTART:${dtStart}`,
+    allday ? `DTEND;VALUE=DATE:${dtEnd}`     : `DTEND:${dtEnd}`,
+    `SUMMARY:${(a.title||'Událost').replace(/\n/g,' ')}`,
+    a.location ? `LOCATION:${a.location.replace(/\n/g,' ')}` : '',
+    details ? `DESCRIPTION:${details}` : '',
+    'END:VEVENT','END:VCALENDAR'
+  ].filter(Boolean).join('\r\n');
+  return lines;
+}
+function downloadICS(aid){
+  const a = ACTIONS.find(x=>x.id===aid) || ARCHIVE.find(x=>x.id===aid);
+  if(!a) return;
+  const ics = buildICS(a);
+  const blob=new Blob([ics],{type:'text/calendar;charset=utf-8'});
+  const aTag=document.createElement('a');
+  aTag.href=URL.createObjectURL(blob);
+  aTag.download=`${_slug(a.title||'udalost')}.ics`;
+  aTag.click();
+}
+window.downloadICS=downloadICS;
+window.googleCalUrl=googleCalUrl;
 
 /* ===== Header + Login ===== */
 function renderHeader(){
@@ -490,7 +573,6 @@ function viewCreateEvent(editId=null){
         <div></div>
       </div>
 
-      <!-- Veřejné sekce -->
       <div class="grid2" style="margin-top:8px">
         <label>Technika<textarea id="ev_tech" class="textarea" placeholder="Seznam techniky, vybavení...">${h(tech)}</textarea></label>
         <label>Poznámka (veřejná)<textarea id="ev_note" class="textarea" placeholder="Doplňující informace pro všechny...">${h(note)}</textarea></label>
@@ -586,6 +668,12 @@ function viewEvents(){
         </div>
       </div>`;
 
+    const calButtons = `
+      <div class="row" style="margin-top:6px">
+        <a class="btn" href="${'${googleCalUrl(a)}'}" target="_blank" rel="noopener">Do Google Kalendáře</a>
+        <button class="btn" type="button" onclick="downloadICS('${'${a.id}'}')">Stáhnout .ics</button>
+      </div>`;
+
     const adminAssign = isPrivileged()? `
       <div class="admin-box small" style="margin-top:8px">
         <b>Ruční přiřazení:</b>
@@ -651,6 +739,7 @@ function viewEvents(){
         </div>
         <ul class="list-plain" style="margin-top:8px">${capHtml}</ul>
         ${publicBoxes}
+        ${calButtons}
         ${adminAssign}
         ${adminFinance}
         <div class="row" style="margin-top:8px">${actionBtn}</div>
@@ -671,6 +760,12 @@ function viewPastEvents(){
   archiveSweep().catch(console.warn);
   const app=$('#app');
   const pubs=getPublicRoleKeys();
+
+  const calButtons = (a) => `
+    <div class="row" style="margin-top:6px">
+      <a class="btn" href="${'${googleCalUrl(a)}'}" target="_blank" rel="noopener">Do Google Kalendáře</a>
+      <button class="btn" type="button" onclick="downloadICS('${'${a.id}'}')">Stáhnout .ics</button>
+    </div>`;
 
   const cards=(ARCHIVE||[]).map(a=>{
     const capHtml=pubs.map(r=>{
@@ -753,6 +848,7 @@ function viewPastEvents(){
       ${adminControls}
       <ul class="list-plain" style="margin-top:8px">${capHtml}</ul>
       ${publicBoxes}
+      ${calButtons(a)}
       ${adminAssign}
       ${adminFinance}
       <details style="margin-top:10px">
@@ -1061,7 +1157,6 @@ async function adminLogoutUser(uid){
     userId: u.id,
     userName: u.name
   });
-  // Přidej záznam do forced
   FORCED.push({ uid: u.id, ts, reason: 'support' });
   await kvSave(DB_ACTIVITY, ACTIVITY);
   await kvSave(DB_FORCED, FORCED);
@@ -1195,7 +1290,7 @@ function viewPassword(){
     <div class="card" style="max-width:520px">
       <div class="grid2">
         <label>Současné heslo
-          <input id="pw_current" class="input" type="password" value="\${h(ME.password||'')}" readonly>
+          <input id="pw_current" class="input" type="password" value="${h(ME.password||'')}" readonly>
         </label>
         <label>Nové heslo
           <input id="pw_new" class="input" type="password" placeholder="Zadejte nové heslo">
@@ -1310,7 +1405,7 @@ window.adminLogoutAll  = adminLogoutAll;
 
 /* ===== Auto logout (30 min) ===== */
 let autoLogoutTimer = null;
-const AUTO_LOGOUT_MS = 30 * 60 * 1000;
+const AUTO_LOGOUT_MS = 30 * 60 * 1000; // 30 minut
 
 function resetAutoLogoutTimer(){
   if(autoLogoutTimer) clearTimeout(autoLogoutTimer);
