@@ -1000,7 +1000,6 @@ async function addRole(){
 function viewActivity(){
   CURRENT_VIEW='activity';
 
-  // Admin NEvidí login/logout; Podpora vidí vše
   const src = isSupportUser(ME)
     ? (ACTIVITY || [])
     : (ACTIVITY || []).filter(a => a.type !== 'login' && a.type !== 'logout');
@@ -1018,11 +1017,55 @@ function viewActivity(){
 }
 window.viewActivity=viewActivity;
 
+/* === Manuální odhlášení v Loginy (jen Podpora) === */
+async function adminLogoutUser(uid){
+  if(!isSupportUser(ME)) return;
+  const u = getUserById(uid);
+  if(!u){ toast('Uživatel nenalezen'); return; }
+
+  ACTIVITY.push({
+    ts: Date.now(),
+    type: 'logout',
+    eventId: null,
+    eventTitle: null,
+    detail: 'manuální odhlášení (Podpora)',
+    userId: u.id,
+    userName: u.name
+  });
+  await kvSave(DB_ACTIVITY, ACTIVITY);
+  toast('Uživatel odhlášen', u.name);
+  viewLogins();
+}
+async function adminLogoutAll(){
+  if(!isSupportUser(ME)) return;
+
+  const targets = USERS.filter(u => isUserCurrentlyLogged(u.id).logged);
+  if(!targets.length){
+    toast('Nikdo není aktuálně přihlášen'); 
+    return;
+  }
+
+  const ts = Date.now();
+  for(const u of targets){
+    ACTIVITY.push({
+      ts,
+      type: 'logout',
+      eventId: null,
+      eventTitle: null,
+      detail: 'hromadné manuální odhlášení (Podpora)',
+      userId: u.id,
+      userName: u.name
+    });
+  }
+  await kvSave(DB_ACTIVITY, ACTIVITY);
+  toast('Odhlášeni všichni přihlášení', `${targets.length} uživ.`);
+  viewLogins();
+}
+
 function viewLogins(){
   if(!isSupportUser(ME)){ CURRENT_VIEW='events'; viewEvents(); return; }
   CURRENT_VIEW='logins';
 
-  // Poslední login/logout + stav přihlášení per user
   const perUser = USERS
     .filter(u=>canSeeUser(u) || isSupportUser(ME))
     .map(u=>{
@@ -1032,14 +1075,17 @@ function viewLogins(){
       return { u, li, lo, logged, since };
     })
     .sort((a,b)=>{
-      if (a.logged !== b.logged) return a.logged ? -1 : 1;   // kdo je přihlášen, je nahoře
-      return (b.li||0) - (a.li||0);                           // pak podle času posledního loginu
+      if (a.logged !== b.logged) return a.logged ? -1 : 1;
+      return (b.li||0) - (a.li||0);
     });
 
   const tableRows = perUser.map(x=>{
     const loggedBadge = x.logged
       ? `✅ Ano${x.since ? ` <span class="muted small">(od ${new Date(x.since).toLocaleString()})</span>` : ''}`
       : '❌ Ne';
+    const actionBtn = x.logged
+      ? `<button class="btn danger" type="button" onclick="adminLogoutUser('${x.u.id}')">Odhlásit</button>`
+      : `<span class="muted">—</span>`;
     return `
       <tr>
         <td>${h(x.u.name)}</td>
@@ -1047,6 +1093,7 @@ function viewLogins(){
         <td>${x.li? new Date(x.li).toLocaleString() : '—'}</td>
         <td>${x.lo? new Date(x.lo).toLocaleString() : '—'}</td>
         <td>${loggedBadge}</td>
+        <td>${actionBtn}</td>
       </tr>
     `;
   }).join('');
@@ -1058,14 +1105,19 @@ function viewLogins(){
     .map(a=>{
       const ts=new Date(a.ts).toLocaleString();
       const who=a.userName || a.userId || 'uživatel';
-      return `<li>${ts}: <b>${h(who)}</b> — ${a.type}</li>`;
+      const det=a.detail? ` — <span class="muted small">${h(a.detail)}</span>` : '';
+      return `<li>${ts}: <b>${h(who)}</b> — ${a.type}${det}</li>`;
     }).join('') || '<li class="muted">Zatím žádné loginy/odhlášení.</li>';
 
   $('#app').innerHTML=`
     <h3>Loginy</h3>
-    <div class="card">
-      <h4>Poslední přihlášení / odhlášení podle uživatele</h4>
-      <div style="overflow:auto">
+
+    <div class="card" style="margin-bottom:12px">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <h4 style="margin:0">Poslední přihlášení / odhlášení podle uživatele</h4>
+        <button class="btn danger" type="button" onclick="adminLogoutAll()">Odhlásit všechny</button>
+      </div>
+      <div style="overflow:auto; margin-top:8px">
         <table class="table">
           <thead>
             <tr>
@@ -1074,13 +1126,15 @@ function viewLogins(){
               <th>Poslední přihlášení</th>
               <th>Poslední odhlášení</th>
               <th>Přihlášen?</th>
+              <th>Akce</th>
             </tr>
           </thead>
           <tbody>${tableRows}</tbody>
         </table>
       </div>
     </div>
-    <div class="card" style="margin-top:12px">
+
+    <div class="card">
       <h4>Chronologicky (posledních 200 událostí)</h4>
       <ul class="list-plain">${recent}</ul>
     </div>
@@ -1108,7 +1162,7 @@ function viewPassword(){
     <div class="card" style="max-width:520px">
       <div class="grid2">
         <label>Současné heslo
-          <input id="pw_current" class="input" type="password" value="${h(ME.password||'')}" readonly>
+          <input id="pw_current" class="input" type="password" value="\${h(ME.password||'')}" readonly>
         </label>
         <label>Nové heslo
           <input id="pw_new" class="input" type="password" placeholder="Zadejte nové heslo">
@@ -1119,7 +1173,7 @@ function viewPassword(){
         <button class="btn" type="button" onclick="(function(){
           const c=document.getElementById('pw_current');
           const n=document.getElementById('pw_new');
-          const show = (c.type==='password'); // pokud jsou skryté, přepnout na text
+          const show = (c.type==='password');
           c.type = show ? 'text' : 'password';
           n.type = show ? 'text' : 'password';
         })()">👁️ Zobrazit/skrýt obě</button>
@@ -1180,7 +1234,6 @@ function renderApp(){
       default: viewEvents();
     }
     
-    // ⬅️ po renderu a přihlášení resetujeme autologout timer
     if(ME) resetAutoLogoutTimer();
   }catch(e){
     showErr('Render error: '+(e.message||e));
@@ -1219,21 +1272,22 @@ window.deleteRole=deleteRole;
 window.addRole=addRole;
 
 window.downloadJson = downloadJson;
+window.adminLogoutUser = adminLogoutUser;
+window.adminLogoutAll  = adminLogoutAll;
+
 /* ===== Auto logout (30 min) ===== */
 let autoLogoutTimer = null;
 const AUTO_LOGOUT_MS = 30 * 60 * 1000; // 30 minut
 
 function resetAutoLogoutTimer(){
   if(autoLogoutTimer) clearTimeout(autoLogoutTimer);
-  if(ME){ // jen když je někdo přihlášen
+  if(ME){
     autoLogoutTimer = setTimeout(()=>{
       alert("Byl jste automaticky odhlášen po 30 minutách nečinnosti.");
       logout();
     }, AUTO_LOGOUT_MS);
   }
 }
-
-// Reset při každé akci uživatele
 ['click','keydown','mousemove','scroll','touchstart'].forEach(ev=>{
   window.addEventListener(ev, resetAutoLogoutTimer, true);
 });
