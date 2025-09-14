@@ -608,7 +608,30 @@ async function saveEvent(editId){
   }
 }
 
-/* ===== PUSH-UP MODAL (detaily + ADMIN sekce) ===== */
+/* ===== Historie akce (render) ===== */
+function renderEventHistory(aid, limit=30){
+  const list = (ACTIVITY||[])
+    .filter(h=>h.eventId===aid)
+    .sort((a,b)=>b.ts-a.ts)
+    .slice(0, limit)
+    .map(h=>{
+      const at=new Date(h.ts).toLocaleString();
+      const who = h.userName || h.userId || 'uživatel';
+      const det = h.detail? ` — <span class="muted">${h.detail}</span>` : '';
+      return `<li>${at}: <b>${h.type}</b> — ${h.eventTitle? h.eventTitle+' — ':''}<i>${h.who||who}</i>${det}</li>`;
+    }).join('') || '<li class="muted">Žádné záznamy.</li>';
+
+  return `
+    <details style="margin-top:10px">
+      <summary><b>Historie akce</b></summary>
+      <div class="card" style="margin-top:8px">
+        <ul class="list-plain">${list}</ul>
+      </div>
+    </details>
+  `;
+}
+
+/* ===== PUSH-UP MODAL (detaily + ADMIN sekce + HISTORIE) ===== */
 function openEventModal(aid){
   const a = ACTIONS.find(x=>x.id===aid) || ARCHIVE.find(x=>x.id===aid);
   if(!a) return;
@@ -656,7 +679,6 @@ function openEventModal(aid){
       <div class="prewrap" style="margin-top:4px">${h(a.notePublic)||'<span class="muted">—</span>'}</div>
     </div>`;
 
-  // === ADMIN SEKCE V MODALU ===
   const adminSection = isPrivileged() ? `
     <div class="admin-box small" style="margin-top:10px">
       <div class="row" style="justify-content:space-between;align-items:center">
@@ -683,6 +705,8 @@ function openEventModal(aid){
     </div>
   ` : '';
 
+  const historyBlock = renderEventHistory(a.id, 30);
+
   const html = `
     <div class="muted">${a.date} • ${a.location||'—'} • ${(a.timeFrom||'')}${a.timeTo?('–'+a.timeTo):''}</div>
     ${a.signupUnlock? `<div class="muted small">Odemknutí přihlašování: <b>${new Date(a.signupUnlock).toLocaleString()}</b></div>` : ''}
@@ -700,6 +724,7 @@ function openEventModal(aid){
     </div>
 
     ${adminSection}
+    ${historyBlock}
 
     <div class="row" style="justify-content:flex-end; margin-top:10px">
       ${actionHtml}
@@ -730,10 +755,7 @@ function renderMonthlyList(source, title, opts = { monthsDesc:false }){
   const toKeyVal = (dStr)=>{
     const d=new Date(dStr+'T00:00:00');
     if(isNaN(d)) return { mk:'Neznámé', ym:0 };
-    return {
-      mk: monthKey(dStr),
-      ym: d.getFullYear()*100 + (d.getMonth()+1)
-    };
+    return { mk: monthKey(dStr), ym: d.getFullYear()*100 + (d.getMonth()+1) };
   };
 
   const groups = new Map(); // mk -> { ym, items:[] }
@@ -747,7 +769,6 @@ function renderMonthlyList(source, title, opts = { monthsDesc:false }){
   const monthBlocks = Array.from(groups.entries())
     .sort(([,A],[,B]) => opts.monthsDesc ? (B.ym - A.ym) : (A.ym - B.ym));
 
-  // helper pro jeden řádek
   const rowHTML = (a)=>{
     const sub = [a.location||'—', (a.timeFrom||'')+(a.timeTo?('–'+a.timeTo):'')].filter(Boolean).join(' • ');
     const mine = isMeSignedInEvent(a);
@@ -764,7 +785,7 @@ function renderMonthlyList(source, title, opts = { monthsDesc:false }){
 
   let out = `<h3>${title}</h3><div class="card" style="padding:0">`;
   for(const [mk, data] of monthBlocks){
-    // uvnitř měsíce seřadit dny chronologicky (od nejstaršího k nejnovějšímu v daném měsíci)
+    // uvnitř měsíce seřadit dny chronologicky
     data.items.sort((a,b)=>{
       const A=(a.date||'')+' '+(a.timeFrom||'00:00');
       const B=(b.date||'')+' '+(b.timeFrom||'00:00');
@@ -784,7 +805,6 @@ function renderMonthlyList(source, title, opts = { monthsDesc:false }){
 function viewEvents(){
   CURRENT_VIEW='events';
   archiveSweep().catch(console.warn);
-  // budoucí akce – měsíce vzestupně
   renderMonthlyList(ACTIONS, 'Události', { monthsDesc:false });
 }
 
