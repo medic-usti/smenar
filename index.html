@@ -451,7 +451,7 @@ async function updateEventBoth(aid, updater){
   if(changed){ renderApp(); }
 }
 
-/* ===== Assign/Unassign členů (ponecháno – nepoužito v seznamu, ale můžeš si přidat do modalu) ===== */
+/* ===== Assign/Unassign členů ===== */
 async function assignMember(aid, roleKey, uid){
   if(!isPrivileged()) return;
   let a=ACTIONS.find(x=>x.id===aid) || ARCHIVE.find(x=>x.id===aid); if(!a) return;
@@ -717,33 +717,41 @@ window.openEventModal=openEventModal;
 window.closeEventModal=closeEventModal;
 
 /* ===== View: Události (měsíční přehled + jedn. řádky) ===== */
-function renderMonthlyList(source, title){
+function renderMonthlyList(source, title, opts = { monthsDesc:false }){
   const app=$('#app');
-
-  const list = (source||[]).slice().sort((a,b)=>{
-    const A=(a.date||'')+' '+(a.timeFrom||'00:00');
-    const B=(b.date||'')+' '+(b.timeFrom||'00:00');
-    return A.localeCompare(B);
-  });
+  const list = (source||[]).slice().filter(a=>a?.date);
 
   if(!list.length){
     app.innerHTML=`<h3>${title}</h3><div class="card muted">Žádné záznamy.</div>`;
     return;
   }
 
-  let out = `<h3>${title}</h3><div class="card" style="padding:0">`;
-  let currentMonth = null;
+  // seskupení podle měsíce + číselná hodnota YYYYMM pro řazení měsíců
+  const toKeyVal = (dStr)=>{
+    const d=new Date(dStr+'T00:00:00');
+    if(isNaN(d)) return { mk:'Neznámé', ym:0 };
+    return {
+      mk: monthKey(dStr),
+      ym: d.getFullYear()*100 + (d.getMonth()+1)
+    };
+  };
 
+  const groups = new Map(); // mk -> { ym, items:[] }
   for(const a of list){
-    const mk = monthKey(a.date||'');
-    if(mk!==currentMonth){
-      if(currentMonth!==null) out += '';
-      currentMonth = mk;
-      out += `<div class="month-header">${h(currentMonth)}</div>`;
-    }
+    const { mk, ym } = toKeyVal(a.date);
+    if(!groups.has(mk)) groups.set(mk, { ym, items:[] });
+    groups.get(mk).items.push(a);
+  }
+
+  // seřadit měsíce (opts.monthsDesc = nejnovější nejdřív)
+  const monthBlocks = Array.from(groups.entries())
+    .sort(([,A],[,B]) => opts.monthsDesc ? (B.ym - A.ym) : (A.ym - B.ym));
+
+  // helper pro jeden řádek
+  const rowHTML = (a)=>{
     const sub = [a.location||'—', (a.timeFrom||'')+(a.timeTo?('–'+a.timeTo):'')].filter(Boolean).join(' • ');
     const mine = isMeSignedInEvent(a);
-    out += `
+    return `
       <div class="event-row ${mine?'mine-row':''}" onclick="openEventModal('${a.id}')">
         <div class="event-date">${fmtDM(a.date||'')}</div>
         <div>
@@ -752,11 +760,23 @@ function renderMonthlyList(source, title){
         </div>
         <div class="event-meta" style="text-align:right">${occupancyLineHTML(a)}</div>
       </div>`;
+  };
+
+  let out = `<h3>${title}</h3><div class="card" style="padding:0">`;
+  for(const [mk, data] of monthBlocks){
+    // uvnitř měsíce seřadit dny chronologicky (od nejstaršího k nejnovějšímu v daném měsíci)
+    data.items.sort((a,b)=>{
+      const A=(a.date||'')+' '+(a.timeFrom||'00:00');
+      const B=(b.date||'')+' '+(b.timeFrom||'00:00');
+      return A.localeCompare(B);
+    });
+
+    out += `<div class="month-header">${h(mk)}</div>`;
+    out += data.items.map(rowHTML).join('');
   }
-
   out += '</div>';
-  app.innerHTML = out;
 
+  app.innerHTML = out;
   ensureActiveRole();
   if(ME) resetAutoLogoutTimer();
 }
@@ -764,14 +784,15 @@ function renderMonthlyList(source, title){
 function viewEvents(){
   CURRENT_VIEW='events';
   archiveSweep().catch(console.warn);
-  renderMonthlyList(ACTIONS, 'Události');
+  // budoucí akce – měsíce vzestupně
+  renderMonthlyList(ACTIONS, 'Události', { monthsDesc:false });
 }
 
-/* ===== View: Proběhlé (stejný layout, ale z ARCHIVE) ===== */
+/* ===== View: Proběhlé (měsíce od nejnovějšího, uvnitř chronologicky) ===== */
 function viewPastEvents(){
   CURRENT_VIEW='past';
   archiveSweep().catch(console.warn);
-  renderMonthlyList(ARCHIVE, 'Proběhlé akce');
+  renderMonthlyList(ARCHIVE, 'Proběhlé akce', { monthsDesc:true });
 }
 
 /* ===== Členové ===== */
