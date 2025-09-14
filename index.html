@@ -462,6 +462,8 @@ async function assignMember(aid, roleKey, uid){
     const u=getUserById(uid); toast('Přiřazen člen', `${u?.name||uid} → ${roleLabel(roleKey)}`);
     await logActivity('assign', a.id, a.title, `${u?.name||uid} (${roleLabel(roleKey)})`);
   }
+  // přerendruj modal, ať je změna hned vidět
+  openEventModal(aid);
 }
 async function removeMember(aid, roleKey, uid){
   if(!isPrivileged()) return;
@@ -470,6 +472,7 @@ async function removeMember(aid, roleKey, uid){
   if(ACTIONS.some(x=>x.id===aid)) await kvSave(DB_ACTIONS,ACTIONS); else await kvSave(DB_ARCHIVE,ARCHIVE);
   const u=getUserById(uid); toast('Odebrán člen', `${u?.name||uid} z ${roleLabel(roleKey)}`);
   await logActivity('unassign', a.id, a.title, `${u?.name||uid} (${roleLabel(roleKey)})`);
+  openEventModal(aid);
 }
 
 /* ===== Finance / admin pozn. ===== */
@@ -631,6 +634,44 @@ function renderEventHistory(aid, limit=30){
   `;
 }
 
+/* ===== Ruční přiřazení (ADMIN) ===== */
+function manualAssignBlock(a){
+  if(!isPrivileged()) return '';
+  const pubs = getPublicRoleKeys();
+  const perRole = pubs.map(r=>{
+    const existing = (a.signups?.[r]||[]).map(uid=>{
+      const nm = h(getUserById(uid)?.name || uid);
+      return `<span class="chip">${nm} <button class="x" title="Odebrat" onclick="removeMember('${a.id}','${r}','${uid}')">×</button></span>`;
+    }).join(' ') || '<span class="muted">—</span>';
+
+    const opts = candidatesForRole(r, a).map(u=>`<option value="${u.id}">${h(u.name)}</option>`).join('');
+    const selId = `sel_${a.id}_${r}`;
+    const disabled = opts? '' : 'disabled';
+
+    return `
+      <div class="card" style="padding:10px">
+        <div class="row" style="justify-content:space-between;align-items:flex-start">
+          <div><b>${roleLabel(r)}</b></div>
+          <div class="small muted">${(a.signups?.[r]||[]).length}/${a.capacity?.[r]||0}</div>
+        </div>
+        <div style="margin-top:6px">${existing}</div>
+        <div class="row" style="margin-top:6px">
+          <select id="${selId}" class="select">${opts || '<option>—</option>'}</select>
+          <button class="btn" ${disabled} type="button"
+            onclick="(function(){ const v=document.getElementById('${selId}').value; if(v) assignMember('${a.id}','${r}',v); })()">Přidat</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  return `
+    <div class="admin-box small" style="margin-top:10px">
+      <b>Ruční přiřazení</b>
+      <div class="grid3" style="margin-top:8px">${perRole}</div>
+    </div>
+  `;
+}
+
 /* ===== PUSH-UP MODAL (detaily + ADMIN sekce + HISTORIE) ===== */
 function openEventModal(aid){
   const a = ACTIONS.find(x=>x.id===aid) || ARCHIVE.find(x=>x.id===aid);
@@ -703,6 +744,7 @@ function openEventModal(aid){
         <div class="muted small">Uloží se i do „Proběhlých“.</div>
       </div>
     </div>
+    ${manualAssignBlock(a)}
   ` : '';
 
   const historyBlock = renderEventHistory(a.id, 30);
