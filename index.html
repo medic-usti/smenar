@@ -55,6 +55,30 @@
     .table{width:100%; border-collapse:collapse}
     .table th,.table td{border:1px solid var(--border); padding:6px 8px; text-align:left}
     .table th{background:#f8fafc}
+
+    /* ==== PUSH-UP MODAL ==== */
+    .modal-backdrop{
+      position:fixed; inset:0; background:rgba(15,23,42,.45);
+      display:none; align-items:flex-end; z-index:80;
+    }
+    .modal-backdrop.open{ display:flex; }
+    .modal{
+      background:#fff; border-top-left-radius:14px; border-top-right-radius:14px;
+      width:100%; max-width:1100px; margin:0 auto; padding:16px; box-shadow:0 -12px 30px rgba(0,0,0,.15);
+      animation:slideUp .18s ease-out;
+    }
+    @keyframes slideUp{ from{ transform:translateY(30px); opacity:.8 } to{ transform:translateY(0); opacity:1 } }
+
+    /* Jednořádkové akce v měsíčním listu */
+    .event-row{
+      display:grid; grid-template-columns: 90px 1fr auto; gap:10px; padding:10px 12px; border-bottom:1px solid var(--border);
+      cursor:pointer; background:#fff;
+    }
+    .event-row:hover{ background:#f8fafc; }
+    .event-date{font-weight:600; white-space:nowrap;}
+    .event-title{font-weight:600;}
+    .event-meta{color:var(--muted); font-size:12px;}
+    .month-header{margin-top:12px; font-weight:800; font-size:18px; padding:8px 4px;}
   </style>
 </head>
 <body>
@@ -73,6 +97,17 @@
 
   <main><div id="app"></div></main>
   <div class="toast-wrap" id="toasts"></div>
+
+  <!-- PUSH-UP MODAL -->
+  <div id="modalBackdrop" class="modal-backdrop" onclick="if(event.target.id==='modalBackdrop'){closeEventModal()}">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="evModalTitle">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <h3 id="evModalTitle" style="margin:0">Událost</h3>
+        <button class="btn" type="button" onclick="closeEventModal()">Zavřít</button>
+      </div>
+      <div id="evModalContent" style="margin-top:8px"></div>
+    </div>
+  </div>
 
   <script type="module">
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
@@ -139,7 +174,7 @@ function subscribeRealtime(){
         DB_ONLINE=true; DB_LAST_TS=Date.now(); DB_LAST_SRC='realtime';
         _lastRealtime=Date.now();
         renderApp();
-        checkForcedLogout(); // okamžitě po realtime ticku
+        checkForcedLogout();
     }).subscribe(st=>{
       DB_ONLINE=(st==='SUBSCRIBED'); DB_LAST_TS=Date.now(); DB_LAST_SRC='sub'; _lastRealtime=Date.now();
     });
@@ -224,7 +259,7 @@ async function init(){
     await seedIfEmpty(); await ensureCoreRoles();
     subscribeRealtime();
     renderApp();
-    checkForcedLogout(); // pro jistotu hned po initu
+    checkForcedLogout();
   }catch(e){
     showErr('Chyba připojení k DB: '+(e.message||e));
     DB_ONLINE=false; DB_LAST_TS=Date.now(); DB_LAST_SRC='error';
@@ -285,7 +320,6 @@ function checkForcedLogout(){
     logout();
   }
 }
-// pojistka i bez realtime
 setInterval(checkForcedLogout, 3000);
 
 /* ===== Event helpers ===== */
@@ -295,6 +329,29 @@ function isPastEvent(a){ return nowMs()>eventEndMs(a); }
 function getUnlockMs(a){ if(!a||!a.signupUnlock) return 0; const ms=new Date(a.signupUnlock).getTime(); return isNaN(ms)?0:ms; }
 function sortEvents(a,b){ const A=(a.date||'')+' '+(a.timeFrom||'00:00'); const B=(b.date||'')+' '+(b.timeFrom||'00:00'); return A.localeCompare(B); }
 async function archiveSweep(){ const toMove=(ACTIONS||[]).filter(isPastEvent); if(!toMove.length) return; ACTIONS=ACTIONS.filter(a=>!isPastEvent(a)); await kvSave(DB_ACTIONS,ACTIONS); ARCHIVE=[...toMove.slice().sort(sortEvents).reverse(), ...ARCHIVE]; await kvSave(DB_ARCHIVE,ARCHIVE); }
+
+/* ===== Obsazenost + formátování data pro měsíční list ===== */
+function occupancyLine(a){
+  const pubs=getPublicRoleKeys();
+  const parts = pubs.map(r=>{
+    const cur=(a.signups?.[r]||[]).length;
+    const cap=(a.capacity?.[r]||0);
+    return `${roleLabel(r)} ${cur}/${cap}`;
+  }).filter(Boolean);
+  return parts.join(' • ');
+}
+function fmtDM(dStr){
+  const d=new Date(dStr+'T00:00:00');
+  if(isNaN(d)) return dStr||'';
+  const dd=String(d.getDate()).padStart(2,'0');
+  const mm=String(d.getMonth()+1).padStart(2,'0');
+  return `${dd}.${mm}.`;
+}
+function monthKey(dStr){
+  const d=new Date(dStr+'T00:00:00'); if(isNaN(d)) return 'Neznámé';
+  const m=d.toLocaleString(undefined,{month:'long', year:'numeric'});
+  return m.charAt(0).toUpperCase()+m.slice(1);
+}
 
 /* ===== Header + Login ===== */
 function renderHeader(){
@@ -490,7 +547,6 @@ function viewCreateEvent(editId=null){
         <div></div>
       </div>
 
-      <!-- Veřejné sekce -->
       <div class="grid2" style="margin-top:8px">
         <label>Technika<textarea id="ev_tech" class="textarea" placeholder="Seznam techniky, vybavení...">${h(tech)}</textarea></label>
         <label>Poznámka (veřejná)<textarea id="ev_note" class="textarea" placeholder="Doplňující informace pro všechny...">${h(note)}</textarea></label>
@@ -540,129 +596,128 @@ async function saveEvent(editId){
   }
 }
 
-/* ===== View: Události ===== */
+/* ===== PUSH-UP MODAL (detaily akce) ===== */
+function openEventModal(aid){
+  const a = ACTIONS.find(x=>x.id===aid) || ARCHIVE.find(x=>x.id===aid);
+  if(!a) return;
+
+  const pubs=getPublicRoleKeys();
+  let actionHtml='';
+  if(!ME){
+    actionHtml = `<span class="muted">Pro přihlášení se nejdřív přihlas.</span>`;
+  }else{
+    const unlockMs=getUnlockMs(a);
+    const isOpen=(unlockMs===0||nowMs()>=unlockMs);
+    if(!isOpen){
+      const when=a.signupUnlock?new Date(a.signupUnlock).toLocaleString():''; 
+      actionHtml=`<span class="muted">Přihlašování se otevře: <b>${when}</b></span>`;
+    }else if(ACTIVE_ROLE){
+      const list=a.signups?.[ACTIVE_ROLE]||[];
+      const isIn=list.includes(ME.id);
+      const full=list.length>=(a.capacity?.[ACTIVE_ROLE]||0);
+      actionHtml = isIn
+        ? `<button class="btn danger" type="button" onclick="leaveEvent('${a.id}'); closeEventModal();">Odhlásit se</button>`
+        : (full
+            ? `<span class="muted">Kapacita pro roli ${roleLabel(ACTIVE_ROLE)} je plná</span>`
+            : `<button class="btn primary" type="button" onclick="joinEvent('${a.id}'); closeEventModal();">Přihlásit se (${roleLabel(ACTIVE_ROLE)})</button>`);
+    }else{
+      actionHtml = `<span class="muted">Nemáš vybranou veřejnou roli.</span>`;
+    }
+  }
+
+  const signupsHtml = pubs.map(r=>{
+    const names=(a.signups?.[r]||[]).map(uid=>h(getUserById(uid)?.name||uid)).join(', ');
+    const cur=(a.signups?.[r]||[]).length, cap=(a.capacity?.[r]||0);
+    return `<div><b>${roleLabel(r)}</b> ${cur}/${cap} ${names?`— <span class="muted">${names}</span>`:''}</div>`;
+  }).join('');
+
+  const techBox = `
+    <div class="pub-box small">
+      <b>Technika</b>
+      <div class="prewrap" style="margin-top:4px">${h(a.tech)||'<span class="muted">—</span>'}</div>
+    </div>`;
+  const noteBox = `
+    <div class="pub-box small">
+      <b>Poznámka</b>
+      <div class="prewrap" style="margin-top:4px">${h(a.notePublic)||'<span class="muted">—</span>'}</div>
+    </div>`;
+
+  const html = `
+    <div class="muted">${a.date} • ${a.location||'—'} • ${(a.timeFrom||'')}${a.timeTo?('–'+a.timeTo):''}</div>
+    ${a.signupUnlock? `<div class="muted small">Odemknutí přihlašování: <b>${new Date(a.signupUnlock).toLocaleString()}</b></div>` : ''}
+
+    <h4 style="margin:10px 0 6px 0">${h(a.title||'Událost')}</h4>
+
+    <div class="row" style="align-items:flex-start">
+      <div style="flex:1; min-width:260px">${techBox}</div>
+      <div style="flex:1; min-width:260px">${noteBox}</div>
+    </div>
+
+    <div style="margin-top:8px">
+      <b>Obsazenost</b>
+      <div class="small" style="margin-top:4px">${signupsHtml||'<span class="muted">—</span>'}</div>
+    </div>
+
+    <div class="row" style="justify-content:flex-end; margin-top:10px">
+      ${actionHtml}
+    </div>
+  `;
+
+  document.getElementById('evModalTitle').textContent = a.title || 'Událost';
+  document.getElementById('evModalContent').innerHTML = html;
+  document.getElementById('modalBackdrop').classList.add('open');
+}
+function closeEventModal(){
+  document.getElementById('modalBackdrop').classList.remove('open');
+}
+window.openEventModal=openEventModal;
+window.closeEventModal=closeEventModal;
+
+/* ===== View: Události (měsíční přehled + jedn. řádky) ===== */
 function viewEvents(){
   CURRENT_VIEW='events';
   archiveSweep().catch(console.warn);
   const app=$('#app');
+
+  const list = (ACTIONS||[]).slice().sort((a,b)=>{
+    const A=(a.date||'')+' '+(a.timeFrom||'00:00');
+    const B=(b.date||'')+' '+(b.timeFrom||'00:00');
+    return A.localeCompare(B);
+  });
+
+  if(!list.length){
+    app.innerHTML=`<h3>Události</h3><div class="card muted">Žádné události.</div>`;
+    return;
+  }
+
+  let out = '<h3>Události</h3><div class="card" style="padding:0">';
+  let currentMonth = null;
+
+  for(const a of list){
+    const mk = monthKey(a.date||'');
+    if(mk!==currentMonth){
+      if(currentMonth!==null) out += '';
+      currentMonth = mk;
+      out += `<div class="month-header">${h(currentMonth)}</div>`;
+    }
+    const occ = occupancyLine(a);
+    const sub = [a.location||'—', (a.timeFrom||'')+(a.timeTo?('–'+a.timeTo):'')].filter(Boolean).join(' • ');
+    out += `
+      <div class="event-row" onclick="openEventModal('${a.id}')">
+        <div class="event-date">${fmtDM(a.date||'')}</div>
+        <div>
+          <div class="event-title">${h(a.title||'Událost')}</div>
+          <div class="event-meta">${h(sub)}</div>
+        </div>
+        <div class="event-meta" style="text-align:right">${h(occ)}</div>
+      </div>`;
+  }
+
+  out += '</div>';
+  app.innerHTML = out;
+
   ensureActiveRole();
-  const pubs=getPublicRoleKeys();
-
-  const cards=(ACTIONS||[]).slice().sort(sortEvents).map(a=>{
-    const capHtml=pubs.map(r=>{
-      const list=a.signups?.[r]||[];
-      const names=list.map(id=>{
-        const u=getUserById(id)||{};
-        const rm = isPrivileged()? ` <button class="x" title="Odebrat" onclick="removeMember('${a.id}','${r}','${id}')">×</button>` : '';
-        return `<span class="chip">${u.name||id}${rm}</span>`;
-      }).join(' ');
-      return `<li><b>${roleLabel(r)}</b>: ${list.length}/${(a.capacity?.[r]||0)} — ${names||'—'}</li>`;
-    }).join('');
-
-    const unlockMs=getUnlockMs(a);
-    const isOpen=(unlockMs===0||nowMs()>=unlockMs);
-    let actionBtn='';
-    if(!ME) actionBtn=`<span class="muted">Přihlašování až po přihlášení</span>`;
-    else if(!isOpen){ const when=a.signupUnlock?new Date(a.signupUnlock).toLocaleString():''; actionBtn=`<span class="muted">Přihlašování se otevře: <b>${when}</b></span>`; }
-    else if(ACTIVE_ROLE){
-      const my=a.signups[ACTIVE_ROLE]||[]; const isIn=my.includes(ME.id);
-      actionBtn = isIn ? `<button class="btn danger" type="button" onclick="leaveEvent('${a.id}')">Odhlásit se</button>`
-                       : (my.length>=(a.capacity[ACTIVE_ROLE]||0) ? `<span class="muted">Kapacita pro roli ${roleLabel(ACTIVE_ROLE)} je plná</span>`
-                         : `<button class="btn primary" type="button" onclick="joinEvent('${a.id}')">Přihlásit se</button>`);
-    } else actionBtn=`<span class="muted">Nemáte vybranou veřejnou roli</span>`;
-
-    const mine=isMeSignedInEvent(a);
-    const minePill = mine ? `<span class="pill mine-pill">✔ Přihlášen</span>` : '';
-
-    const publicBoxes = `
-      <div class="grid2" style="margin-top:8px">
-        <div class="pub-box small">
-          <b>Technika</b>
-          <div class="prewrap" style="margin-top:4px">${h(a.tech)||'<span class="muted">—</span>'}</div>
-        </div>
-        <div class="pub-box small">
-          <b>Poznámka</b>
-          <div class="prewrap" style="margin-top:4px">${h(a.notePublic)||'<span class="muted">—</span>'}</div>
-        </div>
-      </div>`;
-
-    const adminAssign = isPrivileged()? `
-      <div class="admin-box small" style="margin-top:8px">
-        <b>Ruční přiřazení:</b>
-        <div class="grid3" style="margin-top:6px">
-          ${getPublicRoleKeys().map(r=>{
-            const opts=candidatesForRole(r,a).map(u=>`<option value="${u.id}">${u.name}</option>`).join('');
-            const disabled = opts? '' : 'disabled';
-            const selId = `sel_${a.id}_${r}`;
-            return `<div>
-                <label>${roleLabel(r)}</label>
-                <div class="row" style="margin-top:4px">
-                  <select id="${selId}" class="select">${opts||'<option>—</option>'}</select>
-                  <button class="btn" ${disabled} type="button" onclick="(function(){ const v=document.getElementById('${selId}').value; if(v) assignMember('${a.id}','${r}',v); })()">Přidat</button>
-                </div>
-              </div>`;
-          }).join('')}
-        </div>
-      </div>` : '';
-
-    const adminFinance = isPrivileged()? `
-      <div class="admin-box small" style="margin-top:8px">
-        <div class="row">
-          <label class="row" style="gap:6px">
-            <input type="checkbox" ${a.isPaid?'checked':''} onchange="setEventPaid('${a.id}', this.checked)"> Zaplaceno
-          </label>
-          ${a.isPaid?'<span class="badge paid">Zaplaceno</span>':''}
-        </div>
-        <div style="margin-top:6px">
-          <label>Poznámka pro adminy</label>
-          <textarea id="note_${a.id}" class="textarea" placeholder="Interní poznámka...">${h(a.adminNote||'')}</textarea>
-          <div class="row" style="justify-content:flex-end;margin-top:6px">
-            <button class="btn" type="button" onclick="saveEventNote('${a.id}', document.getElementById('note_${a.id}').value)">Uložit pozn.</button>
-          </div>
-          <div class="muted small">Uloží se i do „Proběhlých“.</div>
-        </div>
-      </div>` : '';
-
-    const hist = (ACTIVITY||[]).filter(h=>h.eventId===a.id).sort((x,y)=>y.ts-x.ts).slice(0,20).map(h=>{
-      const at=new Date(h.ts).toLocaleString();
-      const who = h.userName || h.userId || 'uživatel';
-      const det = h.detail? ` — <span class="muted">${h.detail}</span>` : '';
-      return `<li>${at}: <b>${who}</b> — ${h.type}${det}</li>`;
-    }).join('') || '<li class="muted">Žádné záznamy.</li>';
-
-    const adminControls = isPrivileged()? `
-      <div class="row">
-        <button class="btn" type="button" onclick="viewCreateEvent('${a.id}')">Upravit</button>
-        <button class="btn danger" type="button" onclick="deleteEvent('${a.id}')">Smazat</button>
-      </div>` : '';
-
-    return `
-      <div class="card ${mine?'event-mine':''}">
-        <div class="row" style="justify-content:space-between;align-items:flex-start">
-          <div>
-            <div style="font-weight:700">
-              ${a.title} ${minePill} 
-              ${isPrivileged() && a.isPaid ? '<span class="badge paid" title="Zaplaceno">Zaplaceno</span>' : ''}
-            </div>
-            <div class="muted">${a.date} • ${a.location||'—'} • ${(a.timeFrom||'')}${a.timeTo?('–'+a.timeTo):''}</div>
-            ${a.signupUnlock? `<div class="muted small">Odemknutí přihlašování: <b>${new Date(a.signupUnlock).toLocaleString()}</b></div>` : ''}
-          </div>
-          ${adminControls}
-        </div>
-        <ul class="list-plain" style="margin-top:8px">${capHtml}</ul>
-        ${publicBoxes}
-        ${adminAssign}
-        ${adminFinance}
-        <div class="row" style="margin-top:8px">${actionBtn}</div>
-        <details style="margin-top:10px">
-          <summary><b>Historie akce</b></summary>
-          <div class="card" style="margin-top:8px">
-            <ul class="list-plain">${hist}</ul>
-          </div>
-        </details>
-      </div>`;
-  }).join('');
-  app.innerHTML=`<h3>Události</h3>${cards || '<div class="card muted">Žádné události.</div>'}`;
+  if(ME) resetAutoLogoutTimer();
 }
 
 /* ===== View: Proběhlé ===== */
@@ -1061,7 +1116,6 @@ async function adminLogoutUser(uid){
     userId: u.id,
     userName: u.name
   });
-  // Přidej záznam do forced
   FORCED.push({ uid: u.id, ts, reason: 'support' });
   await kvSave(DB_ACTIVITY, ACTIVITY);
   await kvSave(DB_FORCED, FORCED);
@@ -1185,7 +1239,7 @@ function downloadJson(){
   const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='smenar_backup.json'; a.click();
 }
 
-/* ===== Změna hesla (pro všechny přihlášené) ===== */
+/* ===== Změna hesla ===== */
 function viewPassword(){
   if(!ME){ viewLogin(); return; }
   CURRENT_VIEW='password';
@@ -1195,7 +1249,7 @@ function viewPassword(){
     <div class="card" style="max-width:520px">
       <div class="grid2">
         <label>Současné heslo
-          <input id="pw_current" class="input" type="password" value="\${h(ME.password||'')}" readonly>
+          <input id="pw_current" class="input" type="password" value="${h(ME.password||'')}" readonly>
         </label>
         <label>Nové heslo
           <input id="pw_new" class="input" type="password" placeholder="Zadejte nové heslo">
@@ -1223,7 +1277,6 @@ function viewPassword(){
     </div>
   `;
 }
-
 async function saveMyPassword(){
   if(!ME) return;
   const newPw = (document.getElementById('pw_new')?.value||'').trim();
@@ -1321,8 +1374,6 @@ function resetAutoLogoutTimer(){
     }, AUTO_LOGOUT_MS);
   }
 }
-
-// Reset při každé akci uživatele
 ['click','keydown','mousemove','scroll','touchstart'].forEach(ev=>{
   window.addEventListener(ev, resetAutoLogoutTimer, true);
 });
