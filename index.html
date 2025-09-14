@@ -72,13 +72,21 @@
     /* Jednořádkové akce v měsíčním listu */
     .event-row{
       display:grid; grid-template-columns: 90px 1fr auto; gap:10px; padding:10px 12px; border-bottom:1px solid var(--border);
-      cursor:pointer; background:#fff;
+      cursor:pointer; background:#fff; transition:background .15s ease;
     }
     .event-row:hover{ background:#f8fafc; }
+    .event-row.mine-row{ background:#ecfdf5; } /* zelené pozadí, když jsem přihlášen */
+    .event-row.mine-row:hover{ background:#d1fae5; }
     .event-date{font-weight:600; white-space:nowrap;}
     .event-title{font-weight:600;}
     .event-meta{color:var(--muted); font-size:12px;}
     .month-header{margin-top:12px; font-weight:800; font-size:18px; padding:8px 4px;}
+
+    /* Obsazenost per role (na řádku) */
+    .occ-wrap{display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end}
+    .occ-role{font-size:12px; border:1px solid var(--border); border-radius:999px; padding:2px 8px; background:#fff}
+    .occ-ok{color:#6b7280}           /* tlumené pro plné role */
+    .occ-missing{color:#b91c1c; border-color:#fecaca; background:#fef2f2; font-weight:600} /* červeně když chybí */
   </style>
 </head>
 <body>
@@ -330,16 +338,20 @@ function getUnlockMs(a){ if(!a||!a.signupUnlock) return 0; const ms=new Date(a.s
 function sortEvents(a,b){ const A=(a.date||'')+' '+(a.timeFrom||'00:00'); const B=(b.date||'')+' '+(b.timeFrom||'00:00'); return A.localeCompare(B); }
 async function archiveSweep(){ const toMove=(ACTIONS||[]).filter(isPastEvent); if(!toMove.length) return; ACTIONS=ACTIONS.filter(a=>!isPastEvent(a)); await kvSave(DB_ACTIONS,ACTIONS); ARCHIVE=[...toMove.slice().sort(sortEvents).reverse(), ...ARCHIVE]; await kvSave(DB_ARCHIVE,ARCHIVE); }
 
-/* ===== Obsazenost + formátování data pro měsíční list ===== */
-function occupancyLine(a){
+/* ===== Obsazenost pro seznam (HTML s barvami) ===== */
+function occupancyLineHTML(a){
   const pubs=getPublicRoleKeys();
   const parts = pubs.map(r=>{
     const cur=(a.signups?.[r]||[]).length;
     const cap=(a.capacity?.[r]||0);
-    return `${roleLabel(r)} ${cur}/${cap}`;
+    const missing = cap>cur;
+    const cls = missing ? 'occ-role occ-missing' : 'occ-role occ-ok';
+    return `<span class="${cls}">${roleLabel(r)} ${cur}/${cap}</span>`;
   }).filter(Boolean);
-  return parts.join(' • ');
+  return `<div class="occ-wrap">${parts.join('')}</div>`;
 }
+
+/* ===== Formátování datumu a měsíce ===== */
 function fmtDM(dStr){
   const d=new Date(dStr+'T00:00:00');
   if(isNaN(d)) return dStr||'';
@@ -628,7 +640,9 @@ function openEventModal(aid){
   const signupsHtml = pubs.map(r=>{
     const names=(a.signups?.[r]||[]).map(uid=>h(getUserById(uid)?.name||uid)).join(', ');
     const cur=(a.signups?.[r]||[]).length, cap=(a.capacity?.[r]||0);
-    return `<div><b>${roleLabel(r)}</b> ${cur}/${cap} ${names?`— <span class="muted">${names}</span>`:''}</div>`;
+    const missing = cap>cur;
+    const color = missing ? 'style="color:#b91c1c;font-weight:600"' : 'class="muted"';
+    return `<div ${color}><b>${roleLabel(r)}</b> ${cur}/${cap} ${names?`— <span class="muted">${names}</span>`:''}</div>`;
   }).join('');
 
   const techBox = `
@@ -674,23 +688,21 @@ window.openEventModal=openEventModal;
 window.closeEventModal=closeEventModal;
 
 /* ===== View: Události (měsíční přehled + jedn. řádky) ===== */
-function viewEvents(){
-  CURRENT_VIEW='events';
-  archiveSweep().catch(console.warn);
+function renderMonthlyList(source, title){
   const app=$('#app');
 
-  const list = (ACTIONS||[]).slice().sort((a,b)=>{
+  const list = (source||[]).slice().sort((a,b)=>{
     const A=(a.date||'')+' '+(a.timeFrom||'00:00');
     const B=(b.date||'')+' '+(b.timeFrom||'00:00');
     return A.localeCompare(B);
   });
 
   if(!list.length){
-    app.innerHTML=`<h3>Události</h3><div class="card muted">Žádné události.</div>`;
+    app.innerHTML=`<h3>${title}</h3><div class="card muted">Žádné záznamy.</div>`;
     return;
   }
 
-  let out = '<h3>Události</h3><div class="card" style="padding:0">';
+  let out = `<h3>${title}</h3><div class="card" style="padding:0">`;
   let currentMonth = null;
 
   for(const a of list){
@@ -700,16 +712,16 @@ function viewEvents(){
       currentMonth = mk;
       out += `<div class="month-header">${h(currentMonth)}</div>`;
     }
-    const occ = occupancyLine(a);
     const sub = [a.location||'—', (a.timeFrom||'')+(a.timeTo?('–'+a.timeTo):'')].filter(Boolean).join(' • ');
+    const mine = isMeSignedInEvent(a);
     out += `
-      <div class="event-row" onclick="openEventModal('${a.id}')">
+      <div class="event-row ${mine?'mine-row':''}" onclick="openEventModal('${a.id}')">
         <div class="event-date">${fmtDM(a.date||'')}</div>
         <div>
           <div class="event-title">${h(a.title||'Událost')}</div>
           <div class="event-meta">${h(sub)}</div>
         </div>
-        <div class="event-meta" style="text-align:right">${h(occ)}</div>
+        <div class="event-meta" style="text-align:right">${occupancyLineHTML(a)}</div>
       </div>`;
   }
 
@@ -720,105 +732,17 @@ function viewEvents(){
   if(ME) resetAutoLogoutTimer();
 }
 
-/* ===== View: Proběhlé ===== */
+function viewEvents(){
+  CURRENT_VIEW='events';
+  archiveSweep().catch(console.warn);
+  renderMonthlyList(ACTIONS, 'Události');
+}
+
+/* ===== View: Proběhlé (stejný layout) ===== */
 function viewPastEvents(){
   CURRENT_VIEW='past';
   archiveSweep().catch(console.warn);
-  const app=$('#app');
-  const pubs=getPublicRoleKeys();
-
-  const cards=(ARCHIVE||[]).map(a=>{
-    const capHtml=pubs.map(r=>{
-      const list=a.signups?.[r]||[];
-      const names=list.map(id=>{
-        const u=getUserById(id)||{};
-        const rm = isPrivileged()? ` <button class="x" title="Odebrat" onclick="removeMember('${a.id}','${r}','${id}')">×</button>` : '';
-        return `<span class="chip">${u.name||id}${rm}</span>`;
-      }).join(' ');
-      return `<li><b>${roleLabel(r)}</b>: ${list.length}/${(a.capacity?.[r]||0)} — ${names||'—'}</li>`;
-    }).join('');
-
-    const publicBoxes = `
-      <div class="grid2" style="margin-top:8px">
-        <div class="pub-box small">
-          <b>Technika</b>
-          <div class="prewrap" style="margin-top:4px">${h(a.tech)||'<span class="muted">—</span>'}</div>
-        </div>
-        <div class="pub-box small">
-          <b>Poznámka</b>
-          <div class="prewrap" style="margin-top:4px">${h(a.notePublic)||'<span class="muted">—</span>'}</div>
-        </div>
-      </div>`;
-
-    const adminAssign = isPrivileged()? `
-      <div class="admin-box small" style="margin-top:8px">
-        <b>Ruční přiřazení (archiv):</b>
-        <div class="grid3" style="margin-top:6px">
-          ${pubs.map(r=>{
-            const opts=candidatesForRole(r,a).map(u=>`<option value="${u.id}">${u.name}</option>`).join('');
-            const disabled = opts? '' : 'disabled';
-            const selId = `asel_${a.id}_${r}`;
-            return `<div>
-                <label>${roleLabel(r)}</label>
-                <div class="row" style="margin-top:4px">
-                  <select id="${selId}" class="select">${opts||'<option>—</option>'}</select>
-                  <button class="btn" ${disabled} type="button" onclick="(function(){ const v=document.getElementById('${selId}').value; if(v) assignMember('${a.id}','${r}',v); })()">Přidat</button>
-                </div>
-              </div>`;
-          }).join('')}
-        </div>
-      </div>` : '';
-
-    const adminFinance = isPrivileged()? `
-      <div class="admin-box small" style="margin-top:8px">
-        <div class="row">
-          <label class="row" style="gap:6px">
-            <input type="checkbox" ${a.isPaid?'checked':''} onchange="setEventPaid('${a.id}', this.checked)"> Zaplaceno
-          </label>
-          ${a.isPaid?'<span class="badge paid">Zaplaceno</span>':''}
-        </div>
-        <div style="margin-top:6px">
-          <label>Poznámka pro adminy</label>
-          <textarea id="anote_${a.id}" class="textarea" placeholder="Interní poznámka...">${h(a.adminNote||'')}</textarea>
-          <div class="row" style="justify-content:flex-end;margin-top:6px">
-            <button class="btn" type="button" onclick="saveEventNote('${a.id}', document.getElementById('anote_${a.id}').value)">Uložit pozn.</button>
-          </div>
-        </div>
-      </div>` : '';
-
-    const hist = (ACTIVITY||[]).filter(h=>h.eventId===a.id).sort((x,y)=>y.ts-x.ts).slice(0,20).map(h=>{
-      const at=new Date(h.ts).toLocaleString();
-      const who = h.userName || h.userId || 'uživatel';
-      const det = h.detail? ` — <span class="muted">${h.detail}</span>` : '';
-      return `<li>${at}: <b>${who}</b> — ${h.type}${det}</li>`;
-    }).join('') || '<li class="muted">Žádné záznamy.</li>';
-
-    const adminControls = isPrivileged()? `
-      <div class="row" style="margin-top:6px">
-        <button class="btn" type="button" onclick="viewCreateEvent('${a.id}')">Upravit</button>
-        <button class="btn danger" type="button" onclick="deleteEvent('${a.id}')">Smazat</button>
-      </div>` : '';
-
-    return `<div class="card">
-      <div style="font-weight:700">
-        ${a.title}
-        ${isPrivileged() && a.isPaid ? '<span class="badge paid" title="Zaplaceno">Zaplaceno</span>' : ''}
-      </div>
-      <div class="muted">${a.date} • ${a.location||'—'} • ${(a.timeFrom||'')}${a.timeTo?('–'+a.timeTo):''}</div>
-      ${adminControls}
-      <ul class="list-plain" style="margin-top:8px">${capHtml}</ul>
-      ${publicBoxes}
-      ${adminAssign}
-      ${adminFinance}
-      <details style="margin-top:10px">
-        <summary><b>Historie akce</b></summary>
-        <div class="card" style="margin-top:8px">
-          <ul class="list-plain">${hist}</ul>
-        </div>
-      </details>
-    </div>`;
-  }).join('');
-  app.innerHTML=`<h3>Proběhlé akce</h3>${cards || '<div class="card muted">Žádné záznamy.</div>'}`;
+  renderMonthlyList(ARCHIVE, 'Proběhlé akce');
 }
 
 /* ===== Členové ===== */
