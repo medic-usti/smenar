@@ -75,7 +75,7 @@
       cursor:pointer; background:#fff; transition:background .15s ease;
     }
     .event-row:hover{ background:#f8fafc; }
-    .event-row.mine-row{ background:#ecfdf5; } /* zelené pozadí, když jsem přihlášen */
+    .event-row.mine-row{ background:#ecfdf5; }
     .event-row.mine-row:hover{ background:#d1fae5; }
     .event-date{font-weight:600; white-space:nowrap;}
     .event-title{font-weight:600;}
@@ -85,8 +85,8 @@
     /* Obsazenost per role (na řádku) */
     .occ-wrap{display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end}
     .occ-role{font-size:12px; border:1px solid var(--border); border-radius:999px; padding:2px 8px; background:#fff}
-    .occ-ok{color:#6b7280}           /* tlumené pro plné role */
-    .occ-missing{color:#b91c1c; border-color:#fecaca; background:#fef2f2; font-weight:600} /* červeně když chybí */
+    .occ-ok{color:#6b7280}
+    .occ-missing{color:#b91c1c; border-color:#fecaca; background:#fef2f2; font-weight:600}
   </style>
 </head>
 <body>
@@ -451,7 +451,7 @@ async function updateEventBoth(aid, updater){
   if(changed){ renderApp(); }
 }
 
-/* ===== Assign/Unassign členů ===== */
+/* ===== Assign/Unassign členů (ponecháno – nepoužito v seznamu, ale můžeš si přidat do modalu) ===== */
 async function assignMember(aid, roleKey, uid){
   if(!isPrivileged()) return;
   let a=ACTIONS.find(x=>x.id===aid) || ARCHIVE.find(x=>x.id===aid); if(!a) return;
@@ -608,7 +608,7 @@ async function saveEvent(editId){
   }
 }
 
-/* ===== PUSH-UP MODAL (detaily akce) ===== */
+/* ===== PUSH-UP MODAL (detaily + ADMIN sekce) ===== */
 function openEventModal(aid){
   const a = ACTIONS.find(x=>x.id===aid) || ARCHIVE.find(x=>x.id===aid);
   if(!a) return;
@@ -656,6 +656,33 @@ function openEventModal(aid){
       <div class="prewrap" style="margin-top:4px">${h(a.notePublic)||'<span class="muted">—</span>'}</div>
     </div>`;
 
+  // === ADMIN SEKCE V MODALU ===
+  const adminSection = isPrivileged() ? `
+    <div class="admin-box small" style="margin-top:10px">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <div class="row" style="gap:8px">
+          <label class="row" style="gap:6px">
+            <input type="checkbox" ${a.isPaid?'checked':''} onchange="setEventPaid('${a.id}', this.checked)"> Zaplaceno
+          </label>
+          ${a.isPaid?'<span class="badge paid">Zaplaceno</span>':''}
+        </div>
+        <div class="row" style="gap:8px">
+          <button class="btn" type="button" onclick="closeEventModal(); viewCreateEvent('${a.id}')">Upravit</button>
+          <button class="btn danger" type="button" onclick="closeEventModal(); deleteEvent('${a.id}')">Smazat</button>
+        </div>
+      </div>
+
+      <div style="margin-top:6px">
+        <label>Poznámka pro adminy</label>
+        <textarea id="admnote_${a.id}" class="textarea" placeholder="Interní poznámka...">${h(a.adminNote||'')}</textarea>
+        <div class="row" style="justify-content:flex-end;margin-top:6px">
+          <button class="btn" type="button" onclick="saveEventNote('${a.id}', document.getElementById('admnote_${a.id}').value)">Uložit pozn.</button>
+        </div>
+        <div class="muted small">Uloží se i do „Proběhlých“.</div>
+      </div>
+    </div>
+  ` : '';
+
   const html = `
     <div class="muted">${a.date} • ${a.location||'—'} • ${(a.timeFrom||'')}${a.timeTo?('–'+a.timeTo):''}</div>
     ${a.signupUnlock? `<div class="muted small">Odemknutí přihlašování: <b>${new Date(a.signupUnlock).toLocaleString()}</b></div>` : ''}
@@ -671,6 +698,8 @@ function openEventModal(aid){
       <b>Obsazenost</b>
       <div class="small" style="margin-top:4px">${signupsHtml||'<span class="muted">—</span>'}</div>
     </div>
+
+    ${adminSection}
 
     <div class="row" style="justify-content:flex-end; margin-top:10px">
       ${actionHtml}
@@ -738,7 +767,7 @@ function viewEvents(){
   renderMonthlyList(ACTIONS, 'Události');
 }
 
-/* ===== View: Proběhlé (stejný layout) ===== */
+/* ===== View: Proběhlé (stejný layout, ale z ARCHIVE) ===== */
 function viewPastEvents(){
   CURRENT_VIEW='past';
   archiveSweep().catch(console.warn);
@@ -1004,7 +1033,7 @@ async function addRole(){
   viewRoles();
 }
 
-/* ===== Aktivita + Export + Loginy ===== */
+/* ===== Aktivita + Export + Loginy + force logout ===== */
 function viewActivity(){
   CURRENT_VIEW='activity';
   const src = isSupportUser(ME)
@@ -1024,7 +1053,6 @@ function viewActivity(){
 }
 window.viewActivity=viewActivity;
 
-/* === Manuální odhlášení (vytváří i force logout) === */
 async function adminLogoutUser(uid){
   if(!isSupportUser(ME)) return;
   const u = getUserById(uid);
