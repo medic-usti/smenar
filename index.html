@@ -56,18 +56,31 @@
     .table th,.table td{border:1px solid var(--border); padding:6px 8px; text-align:left}
     .table th{background:#f8fafc}
 
-    /* ==== PUSH-UP MODAL ==== */
+    /* ==== PUSH-UP MODAL - mobile friendly ==== */
     .modal-backdrop{
       position:fixed; inset:0; background:rgba(15,23,42,.45);
       display:none; align-items:flex-end; z-index:80;
+      height:100dvh; overflow:hidden;
     }
     .modal-backdrop.open{ display:flex; }
     .modal{
       background:#fff; border-top-left-radius:14px; border-top-right-radius:14px;
-      width:100%; max-width:1100px; margin:0 auto; padding:16px; box-shadow:0 -12px 30px rgba(0,0,0,.15);
+      width:100%; max-width:1100px; margin:0 auto; padding:0;
+      box-shadow:0 -12px 30px rgba(0,0,0,.15);
       animation:slideUp .18s ease-out;
+      max-height:calc(100dvh - 12px);
+      overflow:auto;
+      -webkit-overflow-scrolling:touch;
+      overscroll-behavior:contain;
+      touch-action:pan-y;
     }
     @keyframes slideUp{ from{ transform:translateY(30px); opacity:.8 } to{ transform:translateY(0); opacity:1 } }
+    .modal-header{
+      position:sticky; top:0; z-index:1;
+      background:#fff; border-bottom:1px solid var(--border);
+      padding:12px 16px;
+    }
+    .modal-body{ padding:12px 16px 16px 16px; }
 
     /* Jednořádkové akce v měsíčním listu */
     .event-row{
@@ -109,11 +122,15 @@
   <!-- PUSH-UP MODAL -->
   <div id="modalBackdrop" class="modal-backdrop" onclick="if(event.target.id==='modalBackdrop'){closeEventModal()}">
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="evModalTitle">
-      <div class="row" style="justify-content:space-between;align-items:center">
-        <h3 id="evModalTitle" style="margin:0">Událost</h3>
-        <button class="btn" type="button" onclick="closeEventModal()">Zavřít</button>
+      <div class="modal-header">
+        <div class="row" style="justify-content:space-between;align-items:center">
+          <h3 id="evModalTitle" style="margin:0">Událost</h3>
+          <button class="btn" type="button" onclick="closeEventModal()">Zavřít</button>
+        </div>
       </div>
-      <div id="evModalContent" style="margin-top:8px"></div>
+      <div class="modal-body">
+        <div id="evModalContent"></div>
+      </div>
     </div>
   </div>
 
@@ -338,7 +355,7 @@ function getUnlockMs(a){ if(!a||!a.signupUnlock) return 0; const ms=new Date(a.s
 function sortEvents(a,b){ const A=(a.date||'')+' '+(a.timeFrom||'00:00'); const B=(b.date||'')+' '+(b.timeFrom||'00:00'); return A.localeCompare(B); }
 async function archiveSweep(){ const toMove=(ACTIONS||[]).filter(isPastEvent); if(!toMove.length) return; ACTIONS=ACTIONS.filter(a=>!isPastEvent(a)); await kvSave(DB_ACTIONS,ACTIONS); ARCHIVE=[...toMove.slice().sort(sortEvents).reverse(), ...ARCHIVE]; await kvSave(DB_ARCHIVE,ARCHIVE); }
 
-/* ===== Obsazenost pro seznam (HTML s barvami) ===== */
+/* ===== Obsazenost (řádek) ===== */
 function occupancyLineHTML(a){
   const pubs=getPublicRoleKeys();
   const parts = pubs.map(r=>{
@@ -351,7 +368,7 @@ function occupancyLineHTML(a){
   return `<div class="occ-wrap">${parts.join('')}</div>`;
 }
 
-/* ===== Formátování datumu a měsíce ===== */
+/* ===== Formátování datumů ===== */
 function fmtDM(dStr){
   const d=new Date(dStr+'T00:00:00');
   if(isNaN(d)) return dStr||'';
@@ -462,7 +479,6 @@ async function assignMember(aid, roleKey, uid){
     const u=getUserById(uid); toast('Přiřazen člen', `${u?.name||uid} → ${roleLabel(roleKey)}`);
     await logActivity('assign', a.id, a.title, `${u?.name||uid} (${roleLabel(roleKey)})`);
   }
-  // přerendruj modal, ať je změna hned vidět
   openEventModal(aid);
 }
 async function removeMember(aid, roleKey, uid){
@@ -611,7 +627,7 @@ async function saveEvent(editId){
   }
 }
 
-/* ===== Historie akce (render) ===== */
+/* ===== Historie akce ===== */
 function renderEventHistory(aid, limit=30){
   const list = (ACTIVITY||[])
     .filter(h=>h.eventId===aid)
@@ -672,7 +688,7 @@ function manualAssignBlock(a){
   `;
 }
 
-/* ===== PUSH-UP MODAL (detaily + ADMIN sekce + HISTORIE) ===== */
+/* ===== PUSH-UP MODAL ===== */
 function openEventModal(aid){
   const a = ACTIONS.find(x=>x.id===aid) || ARCHIVE.find(x=>x.id===aid);
   if(!a) return;
@@ -775,15 +791,22 @@ function openEventModal(aid){
 
   document.getElementById('evModalTitle').textContent = a.title || 'Událost';
   document.getElementById('evModalContent').innerHTML = html;
-  document.getElementById('modalBackdrop').classList.add('open');
+  const backdrop = document.getElementById('modalBackdrop');
+  backdrop.classList.add('open');
+
+  // mobile-friendly: začni nahoře + zamkni pozadí
+  const modalEl = backdrop.querySelector('.modal');
+  modalEl.scrollTop = 0;
+  document.body.style.overflow = 'hidden';
 }
 function closeEventModal(){
   document.getElementById('modalBackdrop').classList.remove('open');
+  document.body.style.overflow = '';
 }
 window.openEventModal=openEventModal;
 window.closeEventModal=closeEventModal;
 
-/* ===== View: Události (měsíční přehled + jedn. řádky) ===== */
+/* ===== View: Události (měsíční přehled) ===== */
 function renderMonthlyList(source, title, opts = { monthsDesc:false }){
   const app=$('#app');
   const list = (source||[]).slice().filter(a=>a?.date);
@@ -793,21 +816,19 @@ function renderMonthlyList(source, title, opts = { monthsDesc:false }){
     return;
   }
 
-  // seskupení podle měsíce + číselná hodnota YYYYMM pro řazení měsíců
   const toKeyVal = (dStr)=>{
     const d=new Date(dStr+'T00:00:00');
     if(isNaN(d)) return { mk:'Neznámé', ym:0 };
     return { mk: monthKey(dStr), ym: d.getFullYear()*100 + (d.getMonth()+1) };
   };
 
-  const groups = new Map(); // mk -> { ym, items:[] }
+  const groups = new Map();
   for(const a of list){
     const { mk, ym } = toKeyVal(a.date);
     if(!groups.has(mk)) groups.set(mk, { ym, items:[] });
     groups.get(mk).items.push(a);
   }
 
-  // seřadit měsíce (opts.monthsDesc = nejnovější nejdřív)
   const monthBlocks = Array.from(groups.entries())
     .sort(([,A],[,B]) => opts.monthsDesc ? (B.ym - A.ym) : (A.ym - B.ym));
 
@@ -827,7 +848,6 @@ function renderMonthlyList(source, title, opts = { monthsDesc:false }){
 
   let out = `<h3>${title}</h3><div class="card" style="padding:0">`;
   for(const [mk, data] of monthBlocks){
-    // uvnitř měsíce seřadit dny chronologicky
     data.items.sort((a,b)=>{
       const A=(a.date||'')+' '+(a.timeFrom||'00:00');
       const B=(b.date||'')+' '+(b.timeFrom||'00:00');
