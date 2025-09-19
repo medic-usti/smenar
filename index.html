@@ -147,6 +147,8 @@ const DB_USERS="users", DB_ACTIONS="actions", DB_ROLES="roles", DB_SESSION="sess
 let USERS=[], ACTIONS=[], ROLES=[], ACTIVITY=[], ARCHIVE=[], FORCED=[];
 let ME=null, ACTIVE_ROLE=null;
 let CURRENT_VIEW='events', CURRENT_EDIT_ID=null;
+    // === KURZY: aktuální typ zobrazení listu (event|course) ===
+let CURRENT_KIND = 'event'; // 'event' nebo 'course'
 let DB_ONLINE=false, DB_LAST_TS=0, DB_LAST_SRC='—';
 
 const $=s=>document.querySelector(s);
@@ -409,6 +411,7 @@ function renderHeader(){
             <button type="button" onclick="viewPastEvents()">Proběhlé akce</button>
             <button type="button" onclick="viewMembers()">Členové</button>
             <button type="button" onclick="viewRoles()">Role</button>
+            
 
             ${isSupportUser(ME) ? `
               <button type="button" onclick="viewLogins()">Loginy</button>
@@ -416,6 +419,7 @@ function renderHeader(){
             ` : ''}
 
             <button type="button" onclick="viewCreateEvent()">Nová událost</button>
+            <button type="button" onclick="viewCreateCourse()">Nový kurz</button>
             ${isSupportUser(ME)?`<button type="button" onclick="viewExport()">Export / Záloha</button>`:''}
           </div>
         </div>`:''}
@@ -469,6 +473,7 @@ async function updateEventBoth(aid, updater){
 }
 
 /* ===== Assign/Unassign členů ===== */
+/* ===== Assign/Unassign členů ===== */
 async function assignMember(aid, roleKey, uid){
   if(!isPrivileged()) return;
   let a=ACTIONS.find(x=>x.id===aid) || ARCHIVE.find(x=>x.id===aid); if(!a) return;
@@ -490,6 +495,44 @@ async function removeMember(aid, roleKey, uid){
   await logActivity('unassign', a.id, a.title, `${u?.name||uid} (${roleLabel(roleKey)})`);
   openEventModal(aid);
 }
+
+/* --- Kurzy: jedna kapacita + plochý seznam účastníků --- */
+// >>> START MOD (kurzy)
+async function addCourseMember(aid, uid){
+  if(!isPrivileged()) return;
+  let a=ACTIONS.find(x=>x.id===aid) || ARCHIVE.find(x=>x.id===aid); if(!a) return;
+  // kurzy drží účastníky v a.signupsCourse (pole userId), kapacita v a.capacityCourse
+  a.signupsCourse = Array.isArray(a.signupsCourse) ? a.signupsCourse : [];
+  const cap = parseInt(a.capacityCourse||0,10) || 0;
+
+  if(a.signupsCourse.includes(uid)){
+    toast('Uživatel je už v kurzu'); 
+    openEventModal(aid);
+    return;
+  }
+  if(cap > 0 && a.signupsCourse.length >= cap){
+    toast('Kapacita kurzu je plná.');
+    return;
+  }
+
+  a.signupsCourse.push(uid);
+  if(ACTIONS.some(x=>x.id===aid)) await kvSave(DB_ACTIONS,ACTIONS); else await kvSave(DB_ARCHIVE,ARCHIVE);
+  const u=getUserById(uid); toast('Přiřazen do kurzu', u?.name||uid);
+  await logActivity('assign-course', a.id, a.title, `${u?.name||uid}`);
+  openEventModal(aid);
+}
+
+async function removeCourseMember(aid, uid){
+  if(!isPrivileged()) return;
+  let a=ACTIONS.find(x=>x.id===aid) || ARCHIVE.find(x=>x.id===aid); if(!a) return;
+  a.signupsCourse = (a.signupsCourse||[]).filter(x=>x!==uid);
+  if(ACTIONS.some(x=>x.id===aid)) await kvSave(DB_ACTIONS,ACTIONS); else await kvSave(DB_ARCHIVE,ARCHIVE);
+  const u=getUserById(uid); toast('Odebrán z kurzu', u?.name||uid);
+  await logActivity('unassign-course', a.id, a.title, `${u?.name||uid}`);
+  openEventModal(aid);
+}
+// >>> END MOD (kurzy)
+
 
 /* ===== Finance / admin pozn. ===== */
 async function setEventPaid(aid, paid){
@@ -625,6 +668,92 @@ async function saveEvent(editId){
     await logActivity('create', a.id, a.title);
     viewEvents();
   }
+  function viewCreateCourse(editId=null){
+  if(!isPrivileged()) return;
+  CURRENT_VIEW='create'; CURRENT_EDIT_ID=editId;
+  const a = editId ? (ACTIONS.find(x=>x.id===editId) || ARCHIVE.find(x=>x.id===editId)) : null;
+
+  const date=a?.date || today();
+  const title=a?.title || '';
+  const location=a?.location || '';
+  const tFrom=a?.timeFrom || '';
+  const tTo=a?.timeTo || '';
+  const unlock = a?.signupUnlock || '';
+  const tech = a?.tech || '';
+  const note = a?.notePublic || '';
+  const cap  = a?.capacityCourse ?? 10;
+
+  $('#app').innerHTML=`
+    <h3>${editId?'Upravit kurz':'Nový kurz'}</h3>
+    <div class="card">
+      <div class="grid3">
+        <label>Kdy (datum)<input id="ev_date" class="input" type="date" value="${date}"></label>
+        <label>Od<input id="ev_from" class="input" placeholder="HH:MM" value="${tFrom}"></label>
+        <label>Do<input id="ev_to" class="input" placeholder="HH:MM" value="${tTo}"></label>
+      </div>
+      <div class="grid2" style="margin-top:8px">
+        <label>Název<input id="ev_title" class="input" value="${title}"></label>
+        <label>Místo<input id="ev_loc" class="input" value="${location}"></label>
+      </div>
+      <div class="grid2" style="margin-top:8px">
+        <label>Přihlašování spuštěno od
+          <input id="ev_unlock" class="input" type="datetime-local" value="${unlock? new Date(unlock).toISOString().slice(0,16):''}">
+        </label>
+        <label>Počet členů
+          <input id="course_cap" class="input" type="number" min="0" value="${cap}">
+        </label>
+      </div>
+
+      <div class="grid2" style="margin-top:8px">
+        <label>Technika<textarea id="ev_tech" class="textarea" placeholder="Seznam techniky, vybavení...">${h(tech)}</textarea></label>
+        <label>Poznámka (veřejná)<textarea id="ev_note" class="textarea" placeholder="Doplňující informace...">${h(note)}</textarea></label>
+      </div>
+
+      <div class="row" style="justify-content:flex-end;margin-top:12px">
+        <button class="btn" type="button" onclick="viewEvents()">Zpět</button>
+        <button class="btn primary" type="button" onclick="saveCourse('${editId||''}')">${editId?'Uložit změny':'Vytvořit kurz'}</button>
+      </div>
+    </div>`;
+}
+
+async function saveCourse(editId){
+  if(!isPrivileged()){ alert('Jen admin/podpora'); return; }
+  const d=$('#ev_date')?.value?.trim()||'';
+  const f=$('#ev_from')?.value?.trim()||'';
+  const t=$('#ev_to')?.value?.trim()||'';
+  const ti=$('#ev_title')?.value?.trim()||'';
+  const lo=$('#ev_loc')?.value?.trim()||'';
+  const un=$('#ev_unlock')?.value?.trim()||'';
+  const tech=$('#ev_tech')?.value?.trim()||'';
+  const note=$('#ev_note')?.value?.trim()||'';
+  const cap=parseInt($('#course_cap')?.value||'0',10);
+  const unlock= un? new Date(un).toISOString(): null;
+
+  if(editId){
+    await updateEventBoth(editId, ev=>{
+      ev.isCourse=true; ev.date=d; ev.timeFrom=f; ev.timeTo=t; ev.title=ti; ev.location=lo;
+      ev.signupUnlock=unlock; ev.capacityCourse=isNaN(cap)?0:cap; ev.tech=tech; ev.notePublic=note;
+      ev.signupsCourse = Array.isArray(ev.signupsCourse)? ev.signupsCourse : [];
+    });
+    const e=ACTIONS.find(x=>x.id===editId) || ARCHIVE.find(x=>x.id===editId);
+    await logActivity('edit-course', editId, e?.title);
+    toast('Kurz upraven', ti);
+  }else{
+    const a={
+      id: uid(), isCourse:true,
+      date:d, timeFrom:f, timeTo:t, title:ti, location:lo,
+      signupUnlock:unlock,
+      capacityCourse:isNaN(cap)?0:cap, signupsCourse:[],
+      isPaid:false, adminNote:'', tech:tech, notePublic:note
+    };
+    ACTIONS.push(a); await kvSave(DB_ACTIONS,ACTIONS);
+    await logActivity('create-course', a.id, a.title);
+    toast('Kurz vytvořen', ti);
+  }
+  CURRENT_KIND='course';
+  viewEvents();
+}
+
 }
 
 /* ===== Historie akce ===== */
@@ -653,6 +782,36 @@ function renderEventHistory(aid, limit=30){
 /* ===== Ruční přiřazení (ADMIN) ===== */
 function manualAssignBlock(a){
   if(!isPrivileged()) return '';
+
+  // === Kurzy: jedna kapacita, libovolní uživatelé ===
+  if(a.isCourse){
+    const existing = (a.signupsCourse||[]).map(uid=>{
+      const nm = h(getUserById(uid)?.name || uid);
+      return `<span class="chip">${nm} <button class="x" title="Odebrat" onclick="removeCourseMember('${a.id}','${uid}')">×</button></span>`;
+    }).join(' ') || '<span class="muted">—</span>';
+
+    const opts = (USERS||[])
+      .filter(u=>u.isActive!==false)
+      .filter(canSeeUser)
+      .filter(u=>!(a.signupsCourse||[]).includes(u.id))
+      .map(u=>`<option value="${u.id}">${h(u.name)}</option>`).join('');
+
+    const selId = `selCourse_${a.id}`;
+    const disabled = opts? '' : 'disabled';
+
+    return `
+      <div class="admin-box small" style="margin-top:10px">
+        <b>Účastníci kurzu</b> <span class="muted">(${(a.signupsCourse?.length||0)}/${a.capacityCourse||0})</span>
+        <div style="margin-top:6px">${existing}</div>
+        <div class="row" style="margin-top:6px">
+          <select id="${selId}" class="select">${opts || '<option>—</option>'}</select>
+          <button class="btn" ${disabled} type="button"
+            onclick="(function(){ const v=document.getElementById('${selId}').value; if(v) addCourseMember('${a.id}', v); })()">Přidat</button>
+        </div>
+      </div>`;
+  }
+
+  // === Události: původní per-role blok ===
   const pubs = getPublicRoleKeys();
   const perRole = pubs.map(r=>{
     const existing = (a.signups?.[r]||[]).map(uid=>{
@@ -676,28 +835,74 @@ function manualAssignBlock(a){
           <button class="btn" ${disabled} type="button"
             onclick="(function(){ const v=document.getElementById('${selId}').value; if(v) assignMember('${a.id}','${r}',v); })()">Přidat</button>
         </div>
-      </div>
-    `;
+      </div>`;
   }).join('');
 
   return `
     <div class="admin-box small" style="margin-top:10px">
       <b>Ruční přiřazení</b>
       <div class="grid3" style="margin-top:8px">${perRole}</div>
-    </div>
-  `;
+    </div>`;
 }
 
+/* ===== PUSH-UP MODAL ===== */
 /* ===== PUSH-UP MODAL ===== */
 function openEventModal(aid){
   const a = ACTIONS.find(x=>x.id===aid) || ARCHIVE.find(x=>x.id===aid);
   if(!a) return;
 
-  const pubs=getPublicRoleKeys();
-  let actionHtml='';
+  // --- společné boxy (beze změny)
+  const techBox = `
+    <div class="pub-box small">
+      <b>Technika</b>
+      <div class="prewrap" style="margin-top:4px">${h(a.tech)||'<span class="muted">—</span>'}</div>
+    </div>`;
+  const noteBox = `
+    <div class="pub-box small">
+      <b>Poznámka</b>
+      <div class="prewrap" style="margin-top:4px">${h(a.notePublic)||'<span class="muted">—</span>'}</div>
+    </div>`;
+
+  // --- admin panel (zůstává), pod něj se vloží manualAssignBlock(a), která teď umí i kurzy
+  const adminSection = isPrivileged() ? `
+    <div class="admin-box small" style="margin-top:10px">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <div class="row" style="gap:8px">
+          <label class="row" style="gap:6px">
+            <input type="checkbox" ${a.isPaid?'checked':''} onchange="setEventPaid('${a.id}', this.checked)"> Zaplaceno
+          </label>
+          ${a.isPaid?'<span class="badge paid">Zaplaceno</span>':''}
+        </div>
+        <div class="row" style="gap:8px">
+          <button class="btn" type="button" onclick="closeEventModal(); ${/* pokud kurz, otevřeme kurzový editor */''}
+            ${(a.isCourse?'viewCreateCourse':'viewCreateEvent')}('${a.id}')">Upravit</button>
+          <button class="btn danger" type="button" onclick="closeEventModal(); deleteEvent('${a.id}')">Smazat</button>
+        </div>
+      </div>
+
+      <div style="margin-top:6px">
+        <label>Poznámka pro adminy</label>
+        <textarea id="admnote_${a.id}" class="textarea" placeholder="Interní poznámka...">${h(a.adminNote||'')}</textarea>
+        <div class="row" style="justify-content:flex-end;margin-top:6px">
+          <button class="btn" type="button" onclick="saveEventNote('${a.id}', document.getElementById('admnote_${a.id}').value)">Uložit pozn.</button>
+        </div>
+        <div class="muted small">Uloží se i do „Proběhlých“.</div>
+      </div>
+    </div>
+    ${manualAssignBlock(a)}
+  ` : '';
+
+  // >>> START MOD (kurzy) – akční tlačítka dole a obsazenost mají dvě větve
+  let actionHtml = '';
   if(!ME){
-    actionHtml = `<span class="muted">Pro přihlášení se nejdřív přihlas.</span>`;
+    actionHtml = `<span class="muted">Pro akci se nejdřív přihlas.</span>`;
+  }else if(a.isCourse){
+    // Kurzy: samopřihlašování běžných členů se neumožňuje, spravují admini/podpora
+    actionHtml = isPrivileged()
+      ? `<span class="muted">Účast spravujte v panelu výše (Přidat/Odebrat účastníky).</span>`
+      : `<span class="muted">Pro přihlášení do kurzu kontaktujte admina/podporu.</span>`;
   }else{
+    // Události: původní logika samopřihlášení podle vybrané veřejné role
     const unlockMs=getUnlockMs(a);
     const isOpen=(unlockMs===0||nowMs()>=unlockMs);
     if(!isOpen){
@@ -717,70 +922,54 @@ function openEventModal(aid){
     }
   }
 
-  const signupsHtml = pubs.map(r=>{
-    const names=(a.signups?.[r]||[]).map(uid=>h(getUserById(uid)?.name||uid)).join(', ');
-    const cur=(a.signups?.[r]||[]).length, cap=(a.capacity?.[r]||0);
-    const missing = cap>cur;
-    const color = missing ? 'style="color:#b91c1c;font-weight:600"' : 'class="muted"';
-    return `<div ${color}><b>${roleLabel(r)}</b> ${cur}/${cap} ${names?`— <span class="muted">${names}</span>`:''}</div>`;
-  }).join('');
-
-  const techBox = `
-    <div class="pub-box small">
-      <b>Technika</b>
-      <div class="prewrap" style="margin-top:4px">${h(a.tech)||'<span class="muted">—</span>'}</div>
-    </div>`;
-  const noteBox = `
-    <div class="pub-box small">
-      <b>Poznámka</b>
-      <div class="prewrap" style="margin-top:4px">${h(a.notePublic)||'<span class="muted">—</span>'}</div>
-    </div>`;
-
-  const adminSection = isPrivileged() ? `
-    <div class="admin-box small" style="margin-top:10px">
-      <div class="row" style="justify-content:space-between;align-items:center">
-        <div class="row" style="gap:8px">
-          <label class="row" style="gap:6px">
-            <input type="checkbox" ${a.isPaid?'checked':''} onchange="setEventPaid('${a.id}', this.checked)"> Zaplaceno
-          </label>
-          ${a.isPaid?'<span class="badge paid">Zaplaceno</span>':''}
+  let occBlock = '';
+  if(a.isCourse){
+    const names=(a.signupsCourse||[]).map(uid=>h(getUserById(uid)?.name||uid)).join(', ');
+    const cur=(a.signupsCourse||[]).length, cap=(a.capacityCourse||0);
+    occBlock = `
+      <div style="margin-top:8px">
+        <b>Účastníci</b>
+        <div class="small" style="margin-top:4px">
+          <span><b>${cur}/${cap}</b>${names?` — <span class="muted">${names}</span>`:''}</span>
         </div>
-        <div class="row" style="gap:8px">
-          <button class="btn" type="button" onclick="closeEventModal(); viewCreateEvent('${a.id}')">Upravit</button>
-          <button class="btn danger" type="button" onclick="closeEventModal(); deleteEvent('${a.id}')">Smazat</button>
-        </div>
-      </div>
+      </div>`;
+  }else{
+    const pubs=getPublicRoleKeys();
+    const signupsHtml = pubs.map(r=>{
+      const names=(a.signups?.[r]||[]).map(uid=>h(getUserById(uid)?.name||uid)).join(', ');
+      const cur=(a.signups?.[r]||[]).length, cap=(a.capacity?.[r]||0);
+      const missing = cap>cur;
+      const color = missing ? 'style="color:#b91c1c;font-weight:600"' : 'class="muted"';
+      return `<div ${color}><b>${roleLabel(r)}</b> ${cur}/${cap} ${names?`— <span class="muted">${names}</span>`:''}</div>`;
+    }).join('');
+    occBlock = `
+      <div style="margin-top:8px">
+        <b>Obsazenost</b>
+        <div class="small" style="margin-top:4px">${signupsHtml||'<span class="muted">—</span>'}</div>
+      </div>`;
+  }
+  // >>> END MOD (kurzy)
 
-      <div style="margin-top:6px">
-        <label>Poznámka pro adminy</label>
-        <textarea id="admnote_${a.id}" class="textarea" placeholder="Interní poznámka...">${h(a.adminNote||'')}</textarea>
-        <div class="row" style="justify-content:flex-end;margin-top:6px">
-          <button class="btn" type="button" onclick="saveEventNote('${a.id}', document.getElementById('admnote_${a.id}').value)">Uložit pozn.</button>
-        </div>
-        <div class="muted small">Uloží se i do „Proběhlých“.</div>
-      </div>
-    </div>
-    ${manualAssignBlock(a)}
-  ` : '';
-
+  // --- historie (beze změny)
   const historyBlock = renderEventHistory(a.id, 30);
 
-  const html = `
-    <div class="muted">${a.date} • ${a.location||'—'} • ${(a.timeFrom||'')}${a.timeTo?('–'+a.timeTo):''}</div>
-    ${a.signupUnlock? `<div class="muted small">Odemknutí přihlašování: <b>${new Date(a.signupUnlock).toLocaleString()}</b></div>` : ''}
+  // --- hlavička modalu
+  const whenLine = `${a.date} • ${a.location||'—'} • ${(a.timeFrom||'')}${a.timeTo?('–'+a.timeTo):''}`;
+  const unlockLine = a.signupUnlock
+    ? `<div class="muted small">Odemknutí přihlašování: <b>${new Date(a.signupUnlock).toLocaleString()}</b></div>`
+    : '';
 
-    <h4 style="margin:10px 0 6px 0">${h(a.title||'Událost')}</h4>
+  const html = `
+    <div class="muted">${whenLine}</div>
+    ${unlockLine}
+    <h4 style="margin:10px 0 6px 0">${h(a.title|| (a.isCourse?'Kurz':'Událost'))}</h4>
 
     <div class="row" style="align-items:flex-start">
       <div style="flex:1; min-width:260px">${techBox}</div>
       <div style="flex:1; min-width:260px">${noteBox}</div>
     </div>
 
-    <div style="margin-top:8px">
-      <b>Obsazenost</b>
-      <div class="small" style="margin-top:4px">${signupsHtml||'<span class="muted">—</span>'}</div>
-    </div>
-
+    ${occBlock}
     ${adminSection}
     ${historyBlock}
 
@@ -789,7 +978,7 @@ function openEventModal(aid){
     </div>
   `;
 
-  document.getElementById('evModalTitle').textContent = a.title || 'Událost';
+  document.getElementById('evModalTitle').textContent = a.title || (a.isCourse?'Kurz':'Událost');
   document.getElementById('evModalContent').innerHTML = html;
   const backdrop = document.getElementById('modalBackdrop');
   backdrop.classList.add('open');
@@ -799,20 +988,43 @@ function openEventModal(aid){
   modalEl.scrollTop = 0;
   document.body.style.overflow = 'hidden';
 }
+
 function closeEventModal(){
   document.getElementById('modalBackdrop').classList.remove('open');
   document.body.style.overflow = '';
 }
-window.openEventModal=openEventModal;
-window.closeEventModal=closeEventModal;
 
+
+/* ===== View: Události (měsíční přehled) ===== */
 /* ===== View: Události (měsíční přehled) ===== */
 function renderMonthlyList(source, title, opts = { monthsDesc:false }){
   const app=$('#app');
-  const list = (source||[]).slice().filter(a=>a?.date);
+
+  // --- Původně: const list = (source||[]).slice().filter(a=>a?.date);
+  let list = (source||[]).slice().filter(a=>a?.date);
+
+  // >>> START MOD: filtrování podle přepínače Události/Kurzy
+  // Admin/Podpora si mohou přepínat; řadoví členové kurzy vůbec nevidí
+  if (isPrivileged()) {
+    list = list.filter(a => (CURRENT_KIND === 'course') ? !!a.isCourse : !a.isCourse);
+  } else {
+    list = list.filter(a => !a.isCourse);
+  }
+  // >>> END MOD
+
+  // >>> START MOD: toolbar pro přepínání zobrazení (jen admin/podpora)
+  const toolbar = isPrivileged() ? `
+    <div class="row" style="margin:8px 0">
+      <span class="muted">Zobrazit:</span>
+      <button class="btn ${CURRENT_KIND==='event'?'primary':''}" type="button"
+        onclick="(function(){CURRENT_KIND='event'; renderApp();})()">Události</button>
+      <button class="btn ${CURRENT_KIND==='course'?'primary':''}" type="button"
+        onclick="(function(){CURRENT_KIND='course'; renderApp();})()">Kurzy</button>
+    </div>` : '';
+  // >>> END MOD
 
   if(!list.length){
-    app.innerHTML=`<h3>${title}</h3><div class="card muted">Žádné záznamy.</div>`;
+    app.innerHTML=`<h3>${title}</h3>${toolbar}<div class="card muted">Žádné záznamy.</div>`;
     return;
   }
 
@@ -832,19 +1044,59 @@ function renderMonthlyList(source, title, opts = { monthsDesc:false }){
   const monthBlocks = Array.from(groups.entries())
     .sort(([,A],[,B]) => opts.monthsDesc ? (B.ym - A.ym) : (A.ym - B.ym));
 
+  // --- Původně: occupancyLineHTML(a) pro pravý sloupec
+  // >>> START MOD: pravý sloupec rozlišuje kurz vs událost
   const rowHTML = (a)=>{
     const sub = [a.location||'—', (a.timeFrom||'')+(a.timeTo?('–'+a.timeTo):'')].filter(Boolean).join(' • ');
     const mine = isMeSignedInEvent(a);
+    const right = a.isCourse
+      ? `<div class="event-meta" style="text-align:right"><span class="occ-role">${(a.signupsCourse?.length||0)}/${a.capacityCourse||0} členů</span></div>`
+      : `<div class="event-meta" style="text-align:right">${occupancyLineHTML(a)}</div>`;
     return `
       <div class="event-row ${mine?'mine-row':''}" onclick="openEventModal('${a.id}')">
         <div class="event-date">${fmtDM(a.date||'')}</div>
         <div>
-          <div class="event-title">${h(a.title||'Událost')}</div>
+          <div class="event-title">${h(a.title|| (a.isCourse?'Kurz':'Událost'))}</div>
           <div class="event-meta">${h(sub)}</div>
         </div>
-        <div class="event-meta" style="text-align:right">${occupancyLineHTML(a)}</div>
+        ${right}
       </div>`;
   };
+  // >>> END MOD
+
+  // >>> START MOD: toolbar vložený hned pod <h3>
+  let out = `<h3>${title}</h3>${toolbar}<div class="card" style="padding:0">`;
+  // >>> END MOD
+
+  for(const [mk, data] of monthBlocks){
+    data.items.sort((a,b)=>{
+      const A=(a.date||'')+' '+(a.timeFrom||'00:00');
+      const B=(b.date||'')+' '+(b.timeFrom||'00:00');
+      return A.localeCompare(B);
+    });
+
+    out += `<div class="month-header">${h(mk)}</div>`;
+    out += data.items.map(rowHTML).join('');
+  }
+  out += '</div>';
+
+  app.innerHTML = out;
+  ensureActiveRole();
+  if(ME) resetAutoLogoutTimer();
+}
+
+function viewEvents(){
+  CURRENT_VIEW='events';
+  archiveSweep().catch(console.warn);
+  renderMonthlyList(ACTIONS, 'Události', { monthsDesc:false });
+}
+
+function viewPastEvents(){
+  CURRENT_VIEW='past';
+  archiveSweep().catch(console.warn);
+  renderMonthlyList(ARCHIVE, 'Proběhlé akce', { monthsDesc:true });
+}
+
 
   let out = `<h3>${title}</h3><div class="card" style="padding:0">`;
   for(const [mk, data] of monthBlocks){
@@ -1415,6 +1667,12 @@ window.addRole=addRole;
 window.downloadJson = downloadJson;
 window.adminLogoutUser = adminLogoutUser;
 window.adminLogoutAll  = adminLogoutAll;
+
+window.viewCreateCourse = viewCreateCourse;
+window.saveCourse = saveCourse;
+window.addCourseMember = addCourseMember;
+window.removeCourseMember = removeCourseMember;
+
 
 /* ===== Auto logout (30 min) ===== */
 let autoLogoutTimer = null;
