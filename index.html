@@ -715,6 +715,96 @@ async function saveEvent(editId){
       </div>
     </div>`;
 }
+  // ===== Kurzy: nový editor =====
+function viewCreateCourse(editId=null){
+  if(!isPrivileged()) return;
+  CURRENT_VIEW='create'; CURRENT_EDIT_ID=editId;
+  const a = editId ? (ACTIONS.find(x=>x.id===editId) || ARCHIVE.find(x=>x.id===editId)) : null;
+
+  const date=a?.date || today();
+  const title=a?.title || '';
+  const location=a?.location || '';
+  const tFrom=a?.timeFrom || '';
+  const tTo=a?.timeTo || '';
+  const unlock = a?.signupUnlock || '';
+  const tech = a?.tech || '';
+  const note = a?.notePublic || '';
+  const cap  = a?.capacityCourse ?? 10;
+
+  $('#app').innerHTML=`
+    <h3>${editId?'Upravit kurz':'Nový kurz'}</h3>
+    <div class="card">
+      <div class="grid3">
+        <label>Kdy (datum)<input id="ev_date" class="input" type="date" value="${date}"></label>
+        <label>Od<input id="ev_from" class="input" placeholder="HH:MM" value="${tFrom}"></label>
+        <label>Do<input id="ev_to" class="input" placeholder="HH:MM" value="${tTo}"></label>
+      </div>
+      <div class="grid2" style="margin-top:8px">
+        <label>Název<input id="ev_title" class="input" value="${title}"></label>
+        <label>Místo<input id="ev_loc" class="input" value="${location}"></label>
+      </div>
+      <div class="grid2" style="margin-top:8px">
+        <label>Přihlašování spuštěno od
+          <input id="ev_unlock" class="input" type="datetime-local" value="${unlock? new Date(unlock).toISOString().slice(0,16):''}">
+        </label>
+        <label>Počet členů
+          <input id="course_cap" class="input" type="number" min="0" value="${cap}">
+        </label>
+      </div>
+      <div class="grid2" style="margin-top:8px">
+        <label>Technika<textarea id="ev_tech" class="textarea">${h(tech)}</textarea></label>
+        <label>Poznámka<textarea id="ev_note" class="textarea">${h(note)}</textarea></label>
+      </div>
+      <div class="row" style="justify-content:flex-end;margin-top:12px">
+        <button class="btn" type="button" onclick="viewEvents()">Zpět</button>
+        <button class="btn primary" type="button" onclick="saveCourse('${editId||''}')">${editId?'Uložit změny':'Vytvořit kurz'}</button>
+      </div>
+    </div>`;
+}
+
+async function saveCourse(editId){
+  if(!isPrivileged()){ alert('Jen admin/podpora'); return; }
+  const d=$('#ev_date')?.value?.trim()||'';
+  const f=$('#ev_from')?.value?.trim()||'';
+  const t=$('#ev_to')?.value?.trim()||'';
+  const ti=$('#ev_title')?.value?.trim()||'';
+  const lo=$('#ev_loc')?.value?.trim()||'';
+  const un=$('#ev_unlock')?.value?.trim()||'';
+  const tech=$('#ev_tech')?.value?.trim()||'';
+  const note=$('#ev_note')?.value?.trim()||'';
+  const cap=parseInt($('#course_cap')?.value||'0',10);
+  const unlock= un? new Date(un).toISOString(): null;
+
+  if(editId){
+    await updateEventBoth(editId, ev=>{
+      ev.isCourse=true;
+      ev.date=d; ev.timeFrom=f; ev.timeTo=t; ev.title=ti; ev.location=lo;
+      ev.signupUnlock=unlock;
+      ev.capacityCourse=isNaN(cap)?0:cap;
+      ev.tech=tech; ev.notePublic=note;
+      ev.signupsCourse = Array.isArray(ev.signupsCourse)? ev.signupsCourse : [];
+    });
+    const e=ACTIONS.find(x=>x.id===editId) || ARCHIVE.find(x=>x.id===editId);
+    await logActivity('edit-course', editId, e?.title);
+    toast('Kurz upraven', ti);
+  }else{
+    const a={
+      id: uid(), isCourse:true,
+      date:d, timeFrom:f, timeTo:t, title:ti, location:lo,
+      signupUnlock:unlock,
+      capacityCourse:isNaN(cap)?0:cap,
+      signupsCourse:[],
+      isPaid:false, adminNote:'',
+      tech:tech, notePublic:note
+    };
+    ACTIONS.push(a); await kvSave(DB_ACTIONS,ACTIONS);
+    await logActivity('create-course', a.id, a.title);
+    toast('Kurz vytvořen', ti);
+  }
+  CURRENT_KIND='course';
+  viewEvents();
+}
+
 
 async function saveCourse(editId){
   if(!isPrivileged()){ alert('Jen admin/podpora'); return; }
