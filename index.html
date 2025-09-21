@@ -554,6 +554,7 @@ function viewCreateEvent(editId=null){
   const unlock = a?.signupUnlock || '';
   const tech = a?.tech || '';
   const note = a?.notePublic || '';
+  const isCourse = !!a?.isCourse; // <<< přidáno
 
   const pubs=getPublicRoleKeys();
   const caps = pubs.map(k=>{
@@ -575,7 +576,10 @@ function viewCreateEvent(editId=null){
       </div>
       <div class="grid2" style="margin-top:8px">
         <label>Přihlašování spuštěno od<input id="ev_unlock" class="input" type="datetime-local" value="${unlock? new Date(unlock).toISOString().slice(0,16):''}"></label>
-        <div></div>
+        <label class="row" style="gap:8px; align-items:center">
+          <input id="ev_course" type="checkbox" ${isCourse?'checked':''}>
+          <span><b>Kurz</b> <span class="muted">(ve výpisech uvidí jen Admin &amp; Podpora)</span></span>
+        </label>
       </div>
 
       <div class="grid2" style="margin-top:8px">
@@ -590,6 +594,7 @@ function viewCreateEvent(editId=null){
       </div>
     </div>`;
 }
+
 async function saveEvent(editId){
   if(!isPrivileged()){ alert('Jen admin/podpora'); return; }
   const d=$('#ev_date')?.value?.trim()||'';
@@ -600,7 +605,9 @@ async function saveEvent(editId){
   const un=$('#ev_unlock')?.value?.trim()||'';
   const tech=$('#ev_tech')?.value?.trim()||'';
   const note=$('#ev_note')?.value?.trim()||'';
+  const isCourse = !!$('#ev_course')?.checked; // <<< přidáno
   const unlock= un? new Date(un).toISOString(): null;
+
   const pubs=getPublicRoleKeys();
   const cap={}; pubs.forEach(k=>{ const v=parseInt(document.getElementById('cap_'+k)?.value||'0',10); cap[k]=isNaN(v)?0:v; });
 
@@ -608,6 +615,7 @@ async function saveEvent(editId){
     await updateEventBoth(editId, ev=>{
       ev.date=d; ev.timeFrom=f; ev.timeTo=t; ev.title=ti; ev.location=lo;
       ev.signupUnlock=unlock; ev.capacity=cap; ev.tech=tech; ev.notePublic=note;
+      ev.isCourse = isCourse; // <<< přidáno
     });
     const e=ACTIONS.find(x=>x.id===editId) || ARCHIVE.find(x=>x.id===editId);
     await logActivity('edit', editId, e?.title);
@@ -618,7 +626,8 @@ async function saveEvent(editId){
     const a={
       id: uid(), date:d, timeFrom:f, timeTo:t, title:ti, location:lo,
       signupUnlock:unlock, capacity:cap, signups:su,
-      isPaid:false, adminNote:'', tech:tech, notePublic:note
+      isPaid:false, adminNote:'', tech:tech, notePublic:note,
+      isCourse: isCourse // <<< přidáno
     };
     ACTIONS.push(a); await kvSave(DB_ACTIONS,ACTIONS);
     toast('Událost vytvořena', a.title);
@@ -626,6 +635,7 @@ async function saveEvent(editId){
     viewEvents();
   }
 }
+
 
 /* ===== Historie akce ===== */
 function renderEventHistory(aid, limit=30){
@@ -693,6 +703,12 @@ function openEventModal(aid){
   const a = ACTIONS.find(x=>x.id===aid) || ARCHIVE.find(x=>x.id===aid);
   if(!a) return;
 
+  // <<< pokud jde o kurz a uživatel není privilegovaný, zamítnout >>>
+  if(a.isCourse && !isPrivileged()){
+    alert('Tuto položku mohou zobrazit pouze Admin a Podpora.');
+    return;
+  }
+
   const pubs=getPublicRoleKeys();
   let actionHtml='';
   if(!ME){
@@ -701,7 +717,7 @@ function openEventModal(aid){
     const unlockMs=getUnlockMs(a);
     const isOpen=(unlockMs===0||nowMs()>=unlockMs);
     if(!isOpen){
-      const when=a.signupUnlock?new Date(a.signupUnlock).toLocaleString():''; 
+      const when=a.signupUnlock?new Date(a.signupUnlock).toLocaleString():'';
       actionHtml=`<span class="muted">Přihlašování se otevře: <b>${when}</b></span>`;
     }else if(ACTIVE_ROLE){
       const list=a.signups?.[ACTIVE_ROLE]||[];
@@ -736,6 +752,8 @@ function openEventModal(aid){
       <div class="prewrap" style="margin-top:4px">${h(a.notePublic)||'<span class="muted">—</span>'}</div>
     </div>`;
 
+  const kurzBadge = (a.isCourse && isPrivileged()) ? ` <span class="badge">Kurz</span>` : '';
+
   const adminSection = isPrivileged() ? `
     <div class="admin-box small" style="margin-top:10px">
       <div class="row" style="justify-content:space-between;align-items:center">
@@ -744,6 +762,7 @@ function openEventModal(aid){
             <input type="checkbox" ${a.isPaid?'checked':''} onchange="setEventPaid('${a.id}', this.checked)"> Zaplaceno
           </label>
           ${a.isPaid?'<span class="badge paid">Zaplaceno</span>':''}
+          ${a.isCourse?'<span class="badge">Kurz</span>':''}
         </div>
         <div class="row" style="gap:8px">
           <button class="btn" type="button" onclick="closeEventModal(); viewCreateEvent('${a.id}')">Upravit</button>
@@ -769,7 +788,7 @@ function openEventModal(aid){
     <div class="muted">${a.date} • ${a.location||'—'} • ${(a.timeFrom||'')}${a.timeTo?('–'+a.timeTo):''}</div>
     ${a.signupUnlock? `<div class="muted small">Odemknutí přihlašování: <b>${new Date(a.signupUnlock).toLocaleString()}</b></div>` : ''}
 
-    <h4 style="margin:10px 0 6px 0">${h(a.title||'Událost')}</h4>
+    <h4 style="margin:10px 0 6px 0">${h(a.title||'Událost')}${kurzBadge}</h4>
 
     <div class="row" style="align-items:flex-start">
       <div style="flex:1; min-width:260px">${techBox}</div>
@@ -794,6 +813,12 @@ function openEventModal(aid){
   const backdrop = document.getElementById('modalBackdrop');
   backdrop.classList.add('open');
 
+  const modalEl = backdrop.querySelector('.modal');
+  modalEl.scrollTop = 0;
+  document.body.style.overflow = 'hidden';
+}
+
+
   // mobile-friendly: začni nahoře + zamkni pozadí
   const modalEl = backdrop.querySelector('.modal');
   modalEl.scrollTop = 0;
@@ -809,7 +834,12 @@ window.closeEventModal=closeEventModal;
 /* ===== View: Události (měsíční přehled) ===== */
 function renderMonthlyList(source, title, opts = { monthsDesc:false }){
   const app=$('#app');
-  const list = (source||[]).slice().filter(a=>a?.date);
+  let list = (source||[]).slice().filter(a=>a?.date);
+
+  // <<< filtrování: kurzy vidí jen admin/podpora >>>
+  if(!isPrivileged()){
+    list = list.filter(a => !a.isCourse);
+  }
 
   if(!list.length){
     app.innerHTML=`<h3>${title}</h3><div class="card muted">Žádné záznamy.</div>`;
@@ -835,11 +865,12 @@ function renderMonthlyList(source, title, opts = { monthsDesc:false }){
   const rowHTML = (a)=>{
     const sub = [a.location||'—', (a.timeFrom||'')+(a.timeTo?('–'+a.timeTo):'')].filter(Boolean).join(' • ');
     const mine = isMeSignedInEvent(a);
+    const badgeKurz = (a.isCourse && isPrivileged()) ? ` <span class="badge">Kurz</span>` : '';
     return `
       <div class="event-row ${mine?'mine-row':''}" onclick="openEventModal('${a.id}')">
         <div class="event-date">${fmtDM(a.date||'')}</div>
         <div>
-          <div class="event-title">${h(a.title||'Událost')}</div>
+          <div class="event-title">${h(a.title||'Událost')}${badgeKurz}</div>
           <div class="event-meta">${h(sub)}</div>
         </div>
         <div class="event-meta" style="text-align:right">${occupancyLineHTML(a)}</div>
@@ -863,6 +894,7 @@ function renderMonthlyList(source, title, opts = { monthsDesc:false }){
   ensureActiveRole();
   if(ME) resetAutoLogoutTimer();
 }
+
 
 function viewEvents(){
   CURRENT_VIEW='events';
