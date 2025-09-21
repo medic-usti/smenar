@@ -575,12 +575,16 @@ const v = a?.capacity?.[k] ?? def;
     return `<div><label>${roleLabel(k)} kapacita<input class="input" id="cap_${k}" type="number" min="0" value="${v}"></label></div>`;
   }).join('');
 
-  // všichni aktivní uživatelé (bez ohledu na role)
-  const allActiveUsers = (USERS||[]).filter(u=>u.isActive!==false);
-  const membersChecklist = allActiveUsers.map(u=>{
-    const checked = courseMembers.includes(u.id) ? 'checked' : '';
-    return `<label class="row" style="gap:6px"><input type="checkbox" value="${u.id}" class="ev_course_member" ${checked}> ${h(u.name)}</label>`;
-  }).join('') || '<div class="muted">Žádní uživatelé.</div>';
+  // aktivní uživatelé, které může aktuální uživatel vidět (admin neuvidí Podporu)
+const visibleActiveUsers = (USERS||[])
+  .filter(u => u.isActive !== false)
+  .filter(canSeeUser);
+
+const membersChecklist = visibleActiveUsers.map(u=>{
+  const checked = courseMembers.includes(u.id) ? 'checked' : '';
+  return `<label class="row" style="gap:6px"><input type="checkbox" value="${u.id}" class="ev_course_member" ${checked}> ${h(u.name)}</label>`;
+}).join('') || '<div class="muted">Žádní uživatelé.</div>';
+
 
   $('#app').innerHTML=`
     <h3>${editId?'Upravit událost':'Nová událost'}</h3>
@@ -660,8 +664,12 @@ async function saveEvent(editId){
   const note=$('#ev_note')?.value?.trim()||'';
   const isCourse = !!$('#ev_course')?.checked;
   const courseCap = parseInt($('#ev_course_cap')?.value||'0',10) || 0;
-  const courseMembers = Array.from(document.querySelectorAll('.ev_course_member:checked')).map(i=>i.value);
-  const unlock= un? new Date(un).toISOString(): null;
+const courseMembers = Array.from(document.querySelectorAll('.ev_course_member:checked'))
+  .map(i => i.value)
+  .filter(id => {
+    const u = getUserById(id);
+    return u && canSeeUser(u); // vyloučí support pro ne-support uživatele (admina)
+  });  const unlock= un? new Date(un).toISOString(): null;
 
   const pubs=getPublicRoleKeys();
   const cap={}; pubs.forEach(k=>{ const v=parseInt(document.getElementById('cap_'+k)?.value||'0',10); cap[k]=isNaN(v)?0:v; });
