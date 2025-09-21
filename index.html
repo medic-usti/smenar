@@ -567,7 +567,11 @@ function viewCreateEvent(editId=null){
 
   const pubs=getPublicRoleKeys();
   const caps = pubs.map(k=>{
-    const v = a?.capacity?.[k] ?? (k==='zza'?2:1);
+let def = 1;
+if(k==='zza') def=0;
+if(k==='ridic') def=0;
+if(k=='zachranar') def=0;
+const v = a?.capacity?.[k] ?? def;
     return `<div><label>${roleLabel(k)} kapacita<input class="input" id="cap_${k}" type="number" min="0" value="${v}"></label></div>`;
   }).join('');
 
