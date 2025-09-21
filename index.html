@@ -357,6 +357,12 @@ async function archiveSweep(){ const toMove=(ACTIONS||[]).filter(isPastEvent); i
 
 /* ===== Obsazenost (řádek) ===== */
 function occupancyLineHTML(a){
+  if(a?.isCourse){
+    const cur = (a.courseMembers||[]).length;
+    const cap = Number.isFinite(a.courseCap) ? a.courseCap : 0;
+    return `<div class="occ-wrap"><span class="occ-role ${cap>cur?'occ-missing':'occ-ok'}">Kurz ${cur}/${cap}</span></div>`;
+  }
+
   const pubs=getPublicRoleKeys();
   const parts = pubs.map(r=>{
     const cur=(a.signups?.[r]||[]).length;
@@ -367,6 +373,7 @@ function occupancyLineHTML(a){
   }).filter(Boolean);
   return `<div class="occ-wrap">${parts.join('')}</div>`;
 }
+
 
 /* ===== Formátování datumů ===== */
 function fmtDM(dStr){
@@ -554,13 +561,22 @@ function viewCreateEvent(editId=null){
   const unlock = a?.signupUnlock || '';
   const tech = a?.tech || '';
   const note = a?.notePublic || '';
-  const isCourse = !!a?.isCourse; // <<< přidáno
+  const isCourse = !!a?.isCourse;
+  const courseCap = Number.isFinite(a?.courseCap) ? a.courseCap : 0;
+  const courseMembers = Array.isArray(a?.courseMembers) ? a.courseMembers : [];
 
   const pubs=getPublicRoleKeys();
   const caps = pubs.map(k=>{
     const v = a?.capacity?.[k] ?? (k==='zza'?2:1);
     return `<div><label>${roleLabel(k)} kapacita<input class="input" id="cap_${k}" type="number" min="0" value="${v}"></label></div>`;
   }).join('');
+
+  // všichni aktivní uživatelé (bez ohledu na role)
+  const allActiveUsers = (USERS||[]).filter(u=>u.isActive!==false);
+  const membersChecklist = allActiveUsers.map(u=>{
+    const checked = courseMembers.includes(u.id) ? 'checked' : '';
+    return `<label class="row" style="gap:6px"><input type="checkbox" value="${u.id}" class="ev_course_member" ${checked}> ${h(u.name)}</label>`;
+  }).join('') || '<div class="muted">Žádní uživatelé.</div>';
 
   $('#app').innerHTML=`
     <h3>${editId?'Upravit událost':'Nová událost'}</h3>
@@ -570,30 +586,63 @@ function viewCreateEvent(editId=null){
         <label>Od<input id="ev_from" class="input" placeholder="HH:MM" value="${tFrom}"></label>
         <label>Do<input id="ev_to" class="input" placeholder="HH:MM" value="${tTo}"></label>
       </div>
+
       <div class="grid2" style="margin-top:8px">
         <label>Název<input id="ev_title" class="input" value="${title}"></label>
         <label>Místo<input id="ev_loc" class="input" value="${location}"></label>
       </div>
+
       <div class="grid2" style="margin-top:8px">
-        <label>Přihlašování spuštěno od<input id="ev_unlock" class="input" type="datetime-local" value="${unlock? new Date(unlock).toISOString().slice(0,16):''}"></label>
+        <label>Přihlašování spuštěno od
+          <input id="ev_unlock" class="input" type="datetime-local" value="${unlock? new Date(unlock).toISOString().slice(0,16):''}">
+        </label>
+
         <label class="row" style="gap:8px; align-items:center">
-          <input id="ev_course" type="checkbox" ${isCourse?'checked':''}>
+          <input id="ev_course" type="checkbox" ${isCourse?'checked':''}
+            onchange="(function(){
+              const on = document.getElementById('ev_course').checked;
+              document.getElementById('courseBlock').style.display = on ? '' : 'none';
+            })()">
           <span><b>Kurz</b> <span class="muted">(ve výpisech uvidí jen Admin &amp; Podpora)</span></span>
         </label>
       </div>
 
       <div class="grid2" style="margin-top:8px">
-        <label>Technika<textarea id="ev_tech" class="textarea" placeholder="Seznam techniky, vybavení...">${h(tech)}</textarea></label>
-        <label>Poznámka (veřejná)<textarea id="ev_note" class="textarea" placeholder="Doplňující informace pro všechny...">${h(note)}</textarea></label>
+        <label>Technika
+          <textarea id="ev_tech" class="textarea" placeholder="Seznam techniky, vybavení...">${h(tech)}</textarea>
+        </label>
+        <label>Poznámka (veřejná)
+          <textarea id="ev_note" class="textarea" placeholder="Doplňující informace pro všechny...">${h(note)}</textarea>
+        </label>
       </div>
 
       <div class="grid3" style="margin-top:8px">${caps}</div>
+
+      <!-- BLOK: nastavení kurzu -->
+      <div id="courseBlock" class="admin-box" style="margin-top:12px; ${isCourse?'':'display:none'}">
+        <b>Nastavení kurzu</b>
+        <div class="grid2" style="margin-top:8px">
+          <label>Členové na kurzu (počet míst)
+            <input id="ev_course_cap" class="input" type="number" min="0" value="${courseCap}">
+          </label>
+          <div></div>
+        </div>
+        <div style="margin-top:8px">
+          <b>Vyber členy (bez ohledu na role)</b>
+          <div style="margin-top:6px; max-height:260px; overflow:auto; border:1px solid var(--border); border-radius:8px; padding:8px; background:#fff">
+            ${membersChecklist}
+          </div>
+          <div class="muted small" style="margin-top:6px">Tip: vybraní členové budou uvedeni u kurzu. Počet míst slouží pro přehled obsazenosti (X/Y).</div>
+        </div>
+      </div>
+
       <div class="row" style="justify-content:flex-end;margin-top:12px">
         <button class="btn" type="button" onclick="viewEvents()">Zpět</button>
         <button class="btn primary" type="button" onclick="saveEvent('${editId||''}')">${editId?'Uložit změny':'Vytvořit'}</button>
       </div>
     </div>`;
 }
+
 
 async function saveEvent(editId){
   if(!isPrivileged()){ alert('Jen admin/podpora'); return; }
@@ -605,7 +654,9 @@ async function saveEvent(editId){
   const un=$('#ev_unlock')?.value?.trim()||'';
   const tech=$('#ev_tech')?.value?.trim()||'';
   const note=$('#ev_note')?.value?.trim()||'';
-  const isCourse = !!$('#ev_course')?.checked; // <<< přidáno
+  const isCourse = !!$('#ev_course')?.checked;
+  const courseCap = parseInt($('#ev_course_cap')?.value||'0',10) || 0;
+  const courseMembers = Array.from(document.querySelectorAll('.ev_course_member:checked')).map(i=>i.value);
   const unlock= un? new Date(un).toISOString(): null;
 
   const pubs=getPublicRoleKeys();
@@ -615,7 +666,9 @@ async function saveEvent(editId){
     await updateEventBoth(editId, ev=>{
       ev.date=d; ev.timeFrom=f; ev.timeTo=t; ev.title=ti; ev.location=lo;
       ev.signupUnlock=unlock; ev.capacity=cap; ev.tech=tech; ev.notePublic=note;
-      ev.isCourse = isCourse; // <<< přidáno
+      ev.isCourse = isCourse;
+      ev.courseCap = isCourse ? courseCap : 0;
+      ev.courseMembers = isCourse ? courseMembers : [];
     });
     const e=ACTIONS.find(x=>x.id===editId) || ARCHIVE.find(x=>x.id===editId);
     await logActivity('edit', editId, e?.title);
@@ -627,7 +680,9 @@ async function saveEvent(editId){
       id: uid(), date:d, timeFrom:f, timeTo:t, title:ti, location:lo,
       signupUnlock:unlock, capacity:cap, signups:su,
       isPaid:false, adminNote:'', tech:tech, notePublic:note,
-      isCourse: isCourse // <<< přidáno
+      isCourse: isCourse,
+      courseCap: isCourse ? courseCap : 0,
+      courseMembers: isCourse ? courseMembers : []
     };
     ACTIONS.push(a); await kvSave(DB_ACTIONS,ACTIONS);
     toast('Událost vytvořena', a.title);
@@ -635,6 +690,7 @@ async function saveEvent(editId){
     viewEvents();
   }
 }
+
 
 
 /* ===== Historie akce ===== */
@@ -753,6 +809,24 @@ function openEventModal(aid){
     </div>`;
 
   const kurzBadge = (a.isCourse && isPrivileged()) ? ` <span class="badge">Kurz</span>` : '';
+  // >>> ADDED: kurzový blok (obsazenost + seznam členů)
+const courseBlock = a.isCourse ? `
+  <div class="pub-box small" style="margin-top:8px">
+    <b>Členové kurzu</b>
+    <div class="small" style="margin-top:4px">
+      <div><span class="badge">Obsazenost ${(a.courseMembers||[]).length}/${ Number.isFinite(a.courseCap) ? a.courseCap : 0 }</span></div>
+      <div class="prewrap" style="margin-top:6px">
+        ${
+          (a.courseMembers||[]).length
+            ? (a.courseMembers.map(uid => h(getUserById(uid)?.name || uid)).join(', '))
+            : '<span class="muted">Zatím nikdo</span>'
+        }
+      </div>
+    </div>
+  </div>
+` : '';
+// <<< ADDED
+
 
   const adminSection = isPrivileged() ? `
     <div class="admin-box small" style="margin-top:10px">
@@ -794,6 +868,8 @@ function openEventModal(aid){
       <div style="flex:1; min-width:260px">${techBox}</div>
       <div style="flex:1; min-width:260px">${noteBox}</div>
     </div>
+${courseBlock}   <!-- >>> ADDED: kurzový blok se zobrazí jen když a.isCourse === true -->
+
 
     <div style="margin-top:8px">
       <b>Obsazenost</b>
