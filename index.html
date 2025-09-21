@@ -818,12 +818,6 @@ function openEventModal(aid){
   document.body.style.overflow = 'hidden';
 }
 
-
-  // mobile-friendly: začni nahoře + zamkni pozadí
-  const modalEl = backdrop.querySelector('.modal');
-  modalEl.scrollTop = 0;
-  document.body.style.overflow = 'hidden';
-}
 function closeEventModal(){
   document.getElementById('modalBackdrop').classList.remove('open');
   document.body.style.overflow = '';
