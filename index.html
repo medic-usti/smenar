@@ -147,6 +147,7 @@ const DB_USERS="users", DB_ACTIONS="actions", DB_ROLES="roles", DB_SESSION="sess
 let USERS=[], ACTIONS=[], ROLES=[], ACTIVITY=[], ARCHIVE=[], FORCED=[];
 let ME=null, ACTIVE_ROLE=null;
 let CURRENT_VIEW='events', CURRENT_EDIT_ID=null;
+let DUPLICATE_PREFILL=null;
 let DB_ONLINE=false, DB_LAST_TS=0, DB_LAST_SRC='—';
 
 const $=s=>document.querySelector(s);
@@ -475,6 +476,31 @@ async function updateEventBoth(aid, updater){
   if(changed){ renderApp(); }
 }
 
+
+/* ===== Duplikace události (ADMIN) ===== */
+function startDuplicate(aid){
+  if(!isPrivileged()) return;
+  const a = ACTIONS.find(x=>x.id===aid) || ARCHIVE.find(x=>x.id===aid);
+  if(!a) return;
+  DUPLICATE_PREFILL = {
+    date: a.date || today(),
+    timeFrom: a.timeFrom || '',
+    timeTo: a.timeTo || '',
+    title: (a.title || '') + ' (kopie)',
+    location: a.location || '',
+    signupUnlock: a.signupUnlock || '',
+    capacity: JSON.parse(JSON.stringify(a.capacity || {})),
+    tech: a.tech || '',
+    notePublic: a.notePublic || '',
+    isCourse: !!a.isCourse,
+    courseCap: Number.isFinite(a.courseCap) ? a.courseCap : 0,
+    courseMembers: []
+  };
+  closeEventModal();
+  viewCreateEvent(null);
+}
+window.startDuplicate = startDuplicate;
+
 /* ===== Assign/Unassign členů ===== */
 async function assignMember(aid, roleKey, uid){
   if(!isPrivileged()) return;
@@ -551,19 +577,22 @@ async function deleteEvent(aid){
 function viewCreateEvent(editId=null){
   if(!isPrivileged()) return;
   CURRENT_VIEW='create'; CURRENT_EDIT_ID=editId;
+  const pf = (!editId && DUPLICATE_PREFILL) ? DUPLICATE_PREFILL : null;
+  if(!isPrivileged()) return;
+  CURRENT_VIEW='create'; CURRENT_EDIT_ID=editId;
   const a = editId ? (ACTIONS.find(x=>x.id===editId) || ARCHIVE.find(x=>x.id===editId)) : null;
 
-  const date=a?.date || today();
-  const title=a?.title || '';
-  const location=a?.location || '';
-  const tFrom=a?.timeFrom || '';
-  const tTo=a?.timeTo || '';
-  const unlock = a?.signupUnlock || '';
-  const tech = a?.tech || '';
-  const note = a?.notePublic || '';
-  const isCourse = !!a?.isCourse;
-  const courseCap = Number.isFinite(a?.courseCap) ? a.courseCap : 0;
-  const courseMembers = Array.isArray(a?.courseMembers) ? a.courseMembers : [];
+  const date = pf ? (pf.date||today()) : (a?.date || today());
+  const title = pf ? (pf.title||'') : (a?.title || '');
+  const location = pf ? (pf.location||'') : (a?.location || '');
+  const tFrom = pf ? (pf.timeFrom||'') : (a?.timeFrom || '');
+  const tTo = pf ? (pf.timeTo||'') : (a?.timeTo || '');
+  const unlock = pf ? (pf.signupUnlock||'') : (a?.signupUnlock || '');
+  const tech = pf ? (pf.tech||'') : (a?.tech || '');
+  const note = pf ? (pf.notePublic||'') : (a?.notePublic || '');
+  const isCourse = pf ? !!pf.isCourse : !!a?.isCourse;
+  const courseCap = pf ? (Number.isFinite(pf.courseCap) ? pf.courseCap : 0) : (Number.isFinite(a?.courseCap) ? a.courseCap : 0);
+  const courseMembers = pf ? (Array.isArray(pf.courseMembers) ? pf.courseMembers : []) : (Array.isArray(a?.courseMembers) ? a.courseMembers : []);
 
   const pubs=getPublicRoleKeys();
   const caps = pubs.map(k=>{
@@ -571,7 +600,7 @@ let def = 1;
 if(k==='zza') def=0;
 if(k==='ridic') def=0;
 if(k=='zachranar') def=0;
-const v = a?.capacity?.[k] ?? def;
+const v = pf ? (pf.capacity?.[k] ?? def) : (a?.capacity?.[k] ?? def);
     return `<div><label>${roleLabel(k)} kapacita<input class="input" id="cap_${k}" type="number" min="0" value="${v}"></label></div>`;
   }).join('');
 
@@ -586,7 +615,7 @@ const membersChecklist = visibleActiveUsers.map(u=>{
 }).join('') || '<div class="muted">Žádní uživatelé.</div>';
 
 
-  $('#app').innerHTML=`
+  DUPLICATE_PREFILL = null; $('#app').innerHTML=`
     <h3>${editId?'Upravit událost':'Nová událost'}</h3>
     <div class="card">
       <div class="grid3">
@@ -852,6 +881,7 @@ const courseBlock = a.isCourse ? `
         </div>
         <div class="row" style="gap:8px">
           <button class="btn" type="button" onclick="closeEventModal(); viewCreateEvent('${a.id}')">Upravit</button>
+          <button class=\"btn\" type=\"button\" onclick=\"startDuplicate('${a.id}')\">Duplikovat</button>
           <button class="btn danger" type="button" onclick="closeEventModal(); deleteEvent('${a.id}')">Smazat</button>
         </div>
       </div>
