@@ -328,8 +328,17 @@ function canSeeRoleObj(r){ return canSeeRoleKey(r?.key); }
 function canSeeUser(u){ if(isSupportUser(ME)) return true; return !userHasRole(u,'support'); }
 
 /* ===== Aktivita ===== */
-async function logActivity(type, eventId, eventTitle, detail){
-  ACTIVITY.push({ ts:Date.now(), type, eventId, eventTitle, detail, userId:ME?.id, userName:ME?.name });
+async function logActivity(type, eventId, eventTitle, detail, eventDate){
+ ACTIVITY.push({
+ ts: Date.now(),
+ type,
+ eventId,
+ eventTitle,
+ eventDate: eventDate || null,
+ detail,
+ userId: ME?.id,
+ userName: ME?.name
+ });
   await kvSave(DB_ACTIVITY, ACTIVITY);
 }
 
@@ -532,7 +541,7 @@ async function assignMember(aid, roleKey, uid){
     a.signups[roleKey].push(uid);
     if(ACTIONS.some(x=>x.id===aid)) await kvSave(DB_ACTIONS,ACTIONS); else await kvSave(DB_ARCHIVE,ARCHIVE);
     const u=getUserById(uid); toast('Přiřazen člen', `${u?.name||uid} → ${roleLabel(roleKey)}`);
-    await logActivity('assign', a.id, a.title, `${u?.name||uid} (${roleLabel(roleKey)})`);
+    await logActivity('assign', a.id, a.title, `${u?.name||uid} (${roleLabel(roleKey)})`, a.date);
   }
   openEventModal(aid);
 }
@@ -542,7 +551,7 @@ async function removeMember(aid, roleKey, uid){
   a.signups[roleKey]=(a.signups[roleKey]||[]).filter(x=>x!==uid);
   if(ACTIONS.some(x=>x.id===aid)) await kvSave(DB_ACTIONS,ACTIONS); else await kvSave(DB_ARCHIVE,ARCHIVE);
   const u=getUserById(uid); toast('Odebrán člen', `${u?.name||uid} z ${roleLabel(roleKey)}`);
-  await logActivity('unassign', a.id, a.title, `${u?.name||uid} (${roleLabel(roleKey)})`);
+  await logActivity('unassign', a.id, a.title, `${u?.name||uid} (${roleLabel(roleKey)})`, a.date);
   openEventModal(aid);
 }
 
@@ -551,14 +560,14 @@ async function setEventPaid(aid, paid){
   if(!isPrivileged()) return;
   await updateEventBoth(aid, ev=>{ ev.isPaid=!!paid; });
   const e=ACTIONS.find(x=>x.id===aid) || ARCHIVE.find(x=>x.id===aid);
-  await logActivity('paid', aid, e?.title, paid?'1':'0');
+  await logActivity('paid', aid, e?.title, paid?'1':'0', e?.date);
   toast(paid?'Označeno jako zaplaceno':'Zrušeno zaplaceno');
 }
 async function saveEventNote(aid, text){
   if(!isPrivileged()) return;
   await updateEventBoth(aid, ev=>{ ev.adminNote=(text||''); });
   const e=ACTIONS.find(x=>x.id===aid) || ARCHIVE.find(x=>x.id===aid);
-  await logActivity('note', aid, e?.title, (text||'').slice(0,120));
+  await logActivity('paid', aid, e?.title, paid?'1':'0', e?.date);
   toast('Poznámka uložena');
 }
 
@@ -574,25 +583,25 @@ async function joinEvent(aid){
   a.signups[ACTIVE_ROLE].push(ME.id);
   await kvSave(DB_ACTIONS,ACTIONS);
   toast('Přihlášení úspěšné', a.title);
-  await logActivity('join', a.id, a.title, `${ME.name} (${roleLabel(ACTIVE_ROLE)})`);
+  await logActivity('join', a.id, a.title, `${ME.name} (${roleLabel(ACTIVE_ROLE)})`, a.date);
 }
 async function leaveEvent(aid){
   const a=ACTIONS.find(x=>x.id===aid); if(!a||!ME||!ACTIVE_ROLE) return;
   a.signups[ACTIVE_ROLE]=(a.signups[ACTIVE_ROLE]||[]).filter(x=>x!==ME.id);
   await kvSave(DB_ACTIONS,ACTIONS);
   toast('Odhlášení úspěšné', a.title);
-  await logActivity('leave', a.id, a.title, `${ME.name} (${roleLabel(ACTIVE_ROLE)})`);
+  await logActivity('leave', a.id, a.title, `${ME.name} (${roleLabel(ACTIVE_ROLE)})`, a.date);
 }
 async function deleteEvent(aid){
   if(!isPrivileged()) return;
   if(!confirm('Smazat událost?')) return;
-  let removedTitle='';
+let removedTitle='', removedDate='';
   const ia=ACTIONS.findIndex(x=>x.id===aid);
-  if(ia>-1){ removedTitle=ACTIONS[ia].title||removedTitle; ACTIONS.splice(ia,1); await kvSave(DB_ACTIONS,ACTIONS); }
+  if(ia>-1){removedTitle=ACTIONS[ia].title||removedTitle; removedDate=ACTIONS[ia].date||removedDate; ACTIONS.splice(ia,1); await kvSave(DB_ACTIONS,ACTIONS); }
   const ip=ARCHIVE.findIndex(x=>x.id===aid);
-  if(ip>-1){ removedTitle=removedTitle||ARCHIVE[ip].title||''; ARCHIVE.splice(ip,1); await kvSave(DB_ARCHIVE,ARCHIVE); }
+  if(ip>-1){removedTitle=ACTIONS[ia].title||removedTitle; removedDate=ACTIONS[ia].date||removedDate; ARCHIVE.splice(ip,1); await kvSave(DB_ARCHIVE,ARCHIVE); }
   toast('Událost smazána', removedTitle);
-  await logActivity('delete', aid, removedTitle);
+  await logActivity('delete', aid, removedTitle, null, removedDate);
 }
 
 /* ===== Create/Edit ===== */
@@ -734,7 +743,7 @@ const courseMembers = Array.from(document.querySelectorAll('.ev_course_member:ch
       ev.courseMembers = isCourse ? courseMembers : [];
     });
     const e=ACTIONS.find(x=>x.id===editId) || ARCHIVE.find(x=>x.id===editId);
-    await logActivity('edit', editId, e?.title);
+    await logActivity('edit', editId, e?.title, null, e?.date);
     toast('Událost upravena', ti);
     isPastEvent({date:d,timeTo:t,timeFrom:f}) ? viewPastEvents() : viewEvents();
   }else{
@@ -749,7 +758,7 @@ const courseMembers = Array.from(document.querySelectorAll('.ev_course_member:ch
     };
     ACTIONS.push(a); await kvSave(DB_ACTIONS,ACTIONS);
     toast('Událost vytvořena', a.title);
-    await logActivity('create', a.id, a.title);
+    await logActivity('create', a.id, a.title, null, a.date);
     viewEvents();
   }
 }
@@ -1314,7 +1323,10 @@ function viewActivity(){
     .reverse()
     .map(a=>{
       const ts=new Date(a.ts).toLocaleString();
-      return `<li>${ts}: <b>${a.userName||a.userId||'uživatel'}</b> — ${a.type} ${a.eventTitle?('('+a.eventTitle+')'):''} ${a.detail?('— '+a.detail):''}</li>`;
+      const dateTag = a.eventDate ? ` (${fmtDMy(a.eventDate)})` : '';
+      const titleWithDate = a.eventTitle ? `(${h(a.eventTitle)}${dateTag})` : '';
+      return `<li>${ts}: <b>${h(a.userName||a.userId||'uživatel')}</b> — ${h(a.type)} ${titleWithDate} ${a.detail?('— '+h(a.detail)):''}</li>`;
+     
     })
     .join('') || '<li class="muted">Žádná aktivita.</li>';
 
