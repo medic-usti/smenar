@@ -157,6 +157,28 @@ const uid=()=>crypto.randomUUID?crypto.randomUUID():('id'+Date.now()+Math.random
 
 function h(s){ return (s??'').toString().replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m])); }
 function toast(msg,sub){ const w=$('#toasts'); const d=document.createElement('div'); d.className='toast'; d.innerHTML=`<div>${msg}</div>${sub? `<small>${sub}</small>`:''}`; w.appendChild(d); setTimeout(()=>{ d.style.opacity='0'; d.style.transform='translateY(8px)'; d.style.transition='all .25s'; setTimeout(()=>w.removeChild(d),260); },3000); }
+function fmtDMy(dStr){
+  const d=new Date((dStr||'')+'T00:00:00');
+  if(isNaN(d)) return dStr||'';
+  return `${d.getDate()}.${d.getMonth()+1}.${d.getFullYear()}`;
+}
+
+function confirmAndAssign(aid, roleKey, uid){
+  if(!isPrivileged()) return;
+  const a = ACTIONS.find(x=>x.id===aid) || ARCHIVE.find(x=>x.id===aid);
+  if(!a) return;
+
+  const user = getUserById?.(uid);
+  const role = roleLabel?.(roleKey) || roleKey;
+  const title = a?.title || 'Událost';
+  const dmy = fmtDMy(a?.date);
+  const name = user?.name || uid;
+
+  // stejné "vyskakovací okno" jako u alertu – jen s potvrzením OK/Zrušit
+  const ok = confirm(`Opravdu přiřadit „${name}“ do role „${role}“ k události „${title}“ (${dmy})?`);
+  if(ok) assignMember(aid, roleKey, uid);
+}
+
 function showErr(msg){ const el=document.getElementById('err'); el.textContent=String(msg); el.style.display='block'; console.error(msg); }
 window.addEventListener('error', (e)=>{ showErr(e.message || 'Neznámá chyba'); });
 window.addEventListener('unhandledrejection', (e)=>{ showErr(e.reason?.message || e.reason || 'Nezachycené odmítnutí Promise'); });
@@ -781,8 +803,8 @@ function manualAssignBlock(a){
         <div class="row" style="margin-top:6px">
           <select id="${selId}" class="select">${opts || '<option>—</option>'}</select>
           <button class="btn" ${disabled} type="button"
-            onclick="(function(){ const v=document.getElementById('${selId}').value; if(v) assignMember('${a.id}','${r}',v); })()">Přidat</button>
-        </div>
+  onclick="(function(){ const v=document.getElementById('${selId}').value; if(v) confirmAndAssign('${a.id}','${r}',v); })()">Přidat</button>
+          </div>
       </div>
     `;
   }).join('');
