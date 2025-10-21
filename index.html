@@ -781,8 +781,7 @@ function manualAssignBlock(a){
         <div class="row" style="margin-top:6px">
           <select id="${selId}" class="select">${opts || '<option>—</option>'}</select>
           <button class="btn" ${disabled} type="button"
-- onclick="(function(){ const v=document.getElementById('${selId}').value; if(v) assignMember('${a.id}','${r}',v); })()"
-+ onclick="(function(){ const v=document.getElementById('${selId}').value; if(v) confirmAssignMember('${a.id}','${r}',v); })()"
+            onclick="(function(){ const v=document.getElementById('${selId}').value; if(v) assignMember('${a.id}','${r}',v); })()">Přidat</button>
         </div>
       </div>
     `;
@@ -795,26 +794,6 @@ function manualAssignBlock(a){
     </div>
   `;
 }
-    function fmtDMy(dStr){
-  const d=new Date((dStr||'')+'T00:00:00');
-  if(isNaN(d)) return dStr||'';
-  return `${d.getDate()}.${d.getMonth()+1}.${d.getFullYear()}`;
-}
-
-function confirmAssignMember(aid, roleKey, uid){
-  if(!isPrivileged()) return;
-  const a = ACTIONS.find(x=>x.id===aid) || ARCHIVE.find(x=>x.id===aid);
-  if(!a) return;
-  const user = getUserById(uid);
-  const role = roleLabel(roleKey);
-  const title = a.title || 'Událost';
-  const dmy = fmtDMy(a.date);
-  const name = user?.name || uid;
-
-  const ok = confirm(`Opravdu přiřadit „${name}“ do role „${role}“ k události „${title}“ (${dmy})?`);
-  if(ok) assignMember(aid, roleKey, uid);
-}
-
 
 /* ===== PUSH-UP MODAL ===== */
 function openEventModal(aid){
