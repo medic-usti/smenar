@@ -134,8 +134,19 @@
     </div>
   </div>
 
-  <script type="module">
-import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
+ <script type="module">
+  import { createClient } from "https://esm.sh/@supabase/supabase-js@2.86.2";
+
+  const supabaseUrl = "https://lqpyavwhzpvdbxdidfry.supabase.co";
+  const supabaseAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxxcHlhdndoenB2ZGJ4ZGlkZnJ5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTY4NDQxNzYsImV4cCI6MjA3MjQyMDE3Nn0.baWqIwQrlz8KJ6CfOt7-md7FZvBDSXagFXNpHy_eOH4";
+
+  const supabase = createClient(supabaseUrl, supabaseAnonKey);
+
+  // pokud chceš mít supabase dostupné v konzoli:
+  window.supabase = supabase;
+
+  // … sem dej zbytek logiky Směnáře, co dřív používala supabase …
+</script>
 
 /* ===== Supabase ===== */
 const SUPABASE_URL = "https://lqpyavwhzpvdbxdidfry.supabase.co";
