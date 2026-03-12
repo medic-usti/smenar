@@ -149,6 +149,7 @@
     let USERS=[], ACTIONS=[], ROLES=[], ACTIVITY=[], ARCHIVE=[], FORCED=[];
     let ME=null, ACTIVE_ROLE=null;
     let CURRENT_VIEW='events', CURRENT_EDIT_ID=null;
+    let SELECTED_USER_ID=null;
     let DUPLICATE_PREFILL=null;
     let DB_ONLINE=false, DB_LAST_TS=0, DB_LAST_SRC='—';
 
@@ -431,6 +432,7 @@
       const publicNav = `
         <div class="row">
           <button class="btn" type="button" onclick="viewEvents()">Události</button>
+          <button class="btn" type="button" onclick="viewMyActions()">Moje akce</button>
           <button class="btn" type="button" onclick="viewPastEvents()">Proběhlé</button>
           <button class="btn" type="button" onclick="viewPassword()">Změna hesla</button>
         </div>`;
@@ -446,6 +448,7 @@
               <div class="dropdown">
                 <button type="button" onclick="viewEvents()">Události</button>
                 <button type="button" onclick="viewPastEvents()">Proběhlé akce</button>
+                <button type="button" onclick="viewMyActions()">Moje akce</button>
                 <button type="button" onclick="viewMembers()">Členové</button>
                 <button type="button" onclick="viewRoles()">Role</button>
 
@@ -482,7 +485,7 @@
         const p=$('#loginPass').value;
         const u=(USERS||[]).find(x=>x.name===n && x.password===p && x.isActive!==false);
         if(!u){ alert('Neplatné údaje'); return; }
-        ME=u; localStorage.setItem(DB_SESSION, ME.id); ensureActiveRole();
+        ME=u; SELECTED_USER_ID=ME.id; localStorage.setItem(DB_SESSION, ME.id); ensureActiveRole();
         await logActivity('login', null, null, 'uživatel se přihlásil');
         CURRENT_VIEW='events'; CURRENT_EDIT_ID=null;
         renderApp();
@@ -490,7 +493,8 @@
     }
 
     /* ===== Události: helpers ===== */
-    function isMeSignedInEvent(a){ if(!ME) return false; for(const r of Object.keys(a.signups||{})){ if((a.signups[r]||[]).includes(ME.id)) return true; } return false; }
+    function isUserSignedInEvent(userId, a){ if(!userId||!a) return false; for(const r of Object.keys(a.signups||{})){ if((a.signups[r]||[]).includes(userId)) return true; } return (a.courseMembers||[]).includes(userId); }
+    function isMeSignedInEvent(a){ return isUserSignedInEvent(ME?.id, a); }
     function candidatesForRole(roleKey, a){
       return (USERS||[])
         .filter(u=>u.isActive!==false)
@@ -962,9 +966,17 @@
     window.openEventModal=openEventModal;
     window.closeEventModal=closeEventModal;
 
-    /* ===== View: Události (měsíční přehled) ===== */
-    function renderMonthlyList(source, title, opts = { monthsDesc:false }){
-      const app=$('#app');
+
+
+    function selectedUserForMyActions(){
+      if(!ME) return null;
+      if(!isPrivileged()) return ME;
+      const wanted = SELECTED_USER_ID || ME.id;
+      const u = getUserById(wanted);
+      return u || ME;
+    }
+
+    function buildMonthlyListHTML(source, title, opts = { monthsDesc:false }){
       let list = (source||[]).slice().filter(a=>a?.date);
 
       if(!isPrivileged()){
@@ -972,8 +984,7 @@
       }
 
       if(!list.length){
-        app.innerHTML=`<h3>${title}</h3><div class="card muted">Žádné záznamy.</div>`;
-        return;
+        return `<h3>${title}</h3><div class="card muted">Žádné záznamy.</div>`;
       }
 
       const toKeyVal = (dStr)=>{
@@ -1019,8 +1030,69 @@
         out += data.items.map(rowHTML).join('');
       }
       out += '</div>';
+      return out;
+    }
 
-      app.innerHTML = out;
+    function viewMyActions(){
+      CURRENT_VIEW='my-actions';
+      archiveSweep().catch(console.warn);
+      const app=$('#app');
+      const target = selectedUserForMyActions();
+      const targetId = target?.id || ME?.id;
+      const targetName = target?.name || 'Uživatel';
+
+      const upcoming = (ACTIONS||[]).filter(a=>isUserSignedInEvent(targetId, a));
+      const past = (ARCHIVE||[]).filter(a=>isUserSignedInEvent(targetId, a));
+
+      const userPicker = isPrivileged() ? `
+        <div class="card" style="margin-bottom:12px">
+          <div class="row" style="justify-content:space-between;gap:12px">
+            <div>
+              <div><b>Zobrazený uživatel</b></div>
+              <div class="muted small">Admin / podpora může přepnout pohled na akce konkrétního člena.</div>
+            </div>
+            <div style="min-width:260px;flex:1;max-width:420px">
+              <select id="myActionsUserSel" class="select">
+                ${(USERS||[]).filter(u=>u.isActive!==false).filter(canSeeUser).sort((a,b)=>(a.name||'').localeCompare(b.name||'', 'cs')).map(u=>`<option value="${u.id}" ${u.id===targetId?'selected':''}>${h(u.name||u.id)}</option>`).join('')}
+              </select>
+            </div>
+          </div>
+        </div>` : '';
+
+      app.innerHTML = `
+        <h3>Moje akce</h3>
+        ${userPicker}
+        <div class="card" style="margin-bottom:12px">
+          <div class="row" style="justify-content:space-between;align-items:flex-start">
+            <div>
+              <div><b>${h(targetName)}</b></div>
+              <div class="muted small">Přehled přihlášených a proběhlých akcí.</div>
+            </div>
+            <div class="row">
+              <span class="badge">Aktivní: ${upcoming.length}</span>
+              <span class="badge">Proběhlé: ${past.length}</span>
+            </div>
+          </div>
+        </div>
+        ${buildMonthlyListHTML(upcoming, 'Přihlášené akce', { monthsDesc:false })}
+        <div style="height:12px"></div>
+        ${buildMonthlyListHTML(past, 'Proběhlé akce', { monthsDesc:true })}
+      `;
+
+      const sel = document.getElementById('myActionsUserSel');
+      if(sel){
+        sel.onchange = ()=>{
+          SELECTED_USER_ID = sel.value;
+          viewMyActions();
+        };
+      }
+      if(ME) resetAutoLogoutTimer();
+    }
+
+    /* ===== View: Události (měsíční přehled) ===== */
+    function renderMonthlyList(source, title, opts = { monthsDesc:false }){
+      const app=$('#app');
+      app.innerHTML = buildMonthlyListHTML(source, title, opts);
       ensureActiveRole();
       if(ME) resetAutoLogoutTimer();
     }
@@ -1521,7 +1593,7 @@
         renderHeader();
         if(!ME){
           const sid=localStorage.getItem(DB_SESSION);
-          if(sid){ const u=getUserById(sid); if(u && u.isActive!==false){ ME=u; ensureActiveRole(); } else localStorage.removeItem(DB_SESSION); }
+          if(sid){ const u=getUserById(sid); if(u && u.isActive!==false){ ME=u; SELECTED_USER_ID=ME.id; ensureActiveRole(); } else localStorage.removeItem(DB_SESSION); }
         }
         if(!ME){ viewLogin(); return; }
         if((CURRENT_VIEW==='export' || CURRENT_VIEW==='logins') && !isSupportUser(ME)) CURRENT_VIEW='events';
@@ -1535,6 +1607,7 @@
           case 'export': viewExport(); break;
           case 'logins': viewLogins(); break;
           case 'password': viewPassword(); break;
+          case 'my-actions': viewMyActions(); break;
           default: viewEvents();
         }
         
@@ -1551,6 +1624,7 @@
     window.saveEvent=saveEvent;
     window.viewEvents=viewEvents;
     window.viewPastEvents=viewPastEvents;
+    window.viewMyActions=viewMyActions;
     window.viewMembers=viewMembers;
     window.viewRoles=viewRoles;
     window.viewActivity=viewActivity;
@@ -1600,7 +1674,7 @@
     async function logout(){
       await logActivity('logout', null, null, 'uživatel se odhlásil');
       localStorage.removeItem(DB_SESSION);
-      ME=null; ACTIVE_ROLE=null;
+      ME=null; ACTIVE_ROLE=null; SELECTED_USER_ID=null;
       CURRENT_VIEW='events'; CURRENT_EDIT_ID=null;
       renderHeader();
       viewLogin();
