@@ -81,6 +81,10 @@
       padding:12px 16px;
     }
     .modal-body{ padding:12px 16px 16px 16px; }
+    .modal-header-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+    .icon-btn{display:inline-flex;align-items:center;justify-content:center;width:42px;height:42px;border:1px solid var(--border);background:#fff;border-radius:10px;cursor:pointer;text-decoration:none;flex:0 0 auto}
+    .icon-btn:hover{background:#f8fafc}
+    .gcal-logo{width:22px;height:22px;display:block}
 
     /* Jednořádkové akce v měsíčním listu */
     .event-row{
@@ -125,7 +129,10 @@
       <div class="modal-header">
         <div class="row" style="justify-content:space-between;align-items:center">
           <h3 id="evModalTitle" style="margin:0">Událost</h3>
-          <button class="btn" type="button" onclick="closeEventModal()">Zavřít</button>
+          <div class="modal-header-actions">
+            <div id="evModalActions"></div>
+            <button class="btn" type="button" onclick="closeEventModal()">Zavřít</button>
+          </div>
         </div>
       </div>
       <div class="modal-body">
@@ -995,15 +1002,27 @@
       const historyBlock = renderEventHistory(a.id, 30);
 
       const gcalLink = createGoogleCalendarLink(a);
+      const gcalBtn = `
+        <a class="icon-btn" href="${gcalLink}" target="_blank" rel="noopener noreferrer" title="Přidat do Google Kalendáře" aria-label="Přidat do Google Kalendáře">
+          <svg class="gcal-logo" viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="3" y="4" width="18" height="17" rx="3" fill="#fff" stroke="#dadce0"/>
+            <path d="M7 3v4M17 3v4" stroke="#1a73e8" stroke-width="2" stroke-linecap="round"/>
+            <path d="M3 8h18" stroke="#34a853" stroke-width="2"/>
+            <rect x="6" y="10" width="12" height="8" rx="2" fill="#4285f4"/>
+            <path d="M12.2 12.1c-1.8 0-3 1.2-3 2.9 0 1.7 1.2 2.9 3 2.9 1 0 1.8-.3 2.4-.9l-1-1c-.3.3-.8.5-1.4.5-.9 0-1.6-.5-1.8-1.4h4.4c0-.2.1-.4.1-.6 0-1.5-1.1-2.4-2.7-2.4Zm-1.7 2.2c.2-.7.8-1.1 1.7-1.1.8 0 1.3.4 1.5 1.1h-3.2Z" fill="#fff"/>
+            <rect x="3" y="4" width="18" height="4" rx="3" fill="#ea4335"/>
+          </svg>
+        </a>`;
+      const headerActions = `
+        <div class="row" style="gap:8px;justify-content:flex-end">
+          ${gcalBtn}
+          <button class="btn" type="button" onclick="downloadICS('${a.id}')">Stáhnout ICS</button>
+        </div>`;
       const html = `
         <div class="muted">${a.date} • ${a.location||'—'} • ${(a.timeFrom||'')}${a.timeTo?('–'+a.timeTo):''}</div>
         ${a.signupUnlock? `<div class="muted small">Odemknutí přihlašování: <b>${new Date(a.signupUnlock).toLocaleString()}</b></div>` : ''}
 
         <h4 style="margin:10px 0 6px 0">${h(a.title||'Událost')}${kurzBadge}</h4>
-        <div class="row" style="margin-bottom:8px;gap:8px">
-          <a class="btn" href="${gcalLink}" target="_blank" rel="noopener noreferrer">Přidat do Google Kalendáře</a>
-          <button class="btn" type="button" onclick="downloadICS('${a.id}')">Stáhnout ICS</button>
-        </div>
 
         <div class="row" style="align-items:flex-start">
           <div style="flex:1; min-width:260px">${techBox}</div>
@@ -1025,6 +1044,7 @@
       `;
 
       document.getElementById('evModalTitle').textContent = a.title || 'Událost';
+      document.getElementById('evModalActions').innerHTML = headerActions;
       document.getElementById('evModalContent').innerHTML = html;
       const backdrop = document.getElementById('modalBackdrop');
       backdrop.classList.add('open');
@@ -1036,6 +1056,7 @@
 
     function closeEventModal(){
       document.getElementById('modalBackdrop').classList.remove('open');
+      document.getElementById('evModalActions').innerHTML = '';
       document.body.style.overflow = '';
     }
     window.openEventModal=openEventModal;
