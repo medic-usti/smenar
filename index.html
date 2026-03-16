@@ -432,6 +432,31 @@
 
     function pad2(n){ return String(n).padStart(2,'0'); }
     function escapeICS(s){ return (s||'').toString().replace(/\\/g,'\\\\').replace(/\n/g,'\\n').replace(/,/g,'\\,').replace(/;/g,'\\;'); }
+    function buildCalendarDescription(a){
+      const lines = [];
+      if(a?.title) lines.push(`Akce: ${a.title}`);
+      if(a?.notePublic) lines.push(`Co se dělá: ${a.notePublic}`);
+      if(a?.tech) lines.push(`Technika: ${a.tech}`);
+      if(a?.isCourse) lines.push('Typ: Kurz');
+
+      const signupLines = [];
+      const roleKeys = Object.keys(a?.signups || {});
+      for(const roleKey of roleKeys){
+        const ids = Array.isArray(a?.signups?.[roleKey]) ? a.signups[roleKey] : [];
+        if(!ids.length) continue;
+        const names = ids.map(uid => getUserById(uid)?.name || uid).join(', ');
+        signupLines.push(`${roleLabel(roleKey)}: ${names}`);
+      }
+      if(Array.isArray(a?.courseMembers) && a.courseMembers.length){
+        const courseNames = a.courseMembers.map(uid => getUserById(uid)?.name || uid).join(', ');
+        signupLines.push(`Členové kurzu: ${courseNames}`);
+      }
+      if(signupLines.length){
+        lines.push(`Zapsaní na akci:
+${signupLines.join('\n')}`);
+      }
+      return lines.filter(Boolean).join('\n\n');
+    }
     function eventDateParts(a){
       const date = a?.date || today();
       const from = safeHHMM(a?.timeFrom) || '08:00';
@@ -482,7 +507,7 @@
         `DTEND:${icsDate(parts.end)}`,
         `SUMMARY:${escapeICS(a.title || 'Událost')}`,
         `LOCATION:${escapeICS(a.location || '')}`,
-        `DESCRIPTION:${escapeICS([a.notePublic ? 'Poznámka: ' + a.notePublic : '', a.tech ? 'Technika: ' + a.tech : '', a.isCourse ? 'Typ: Kurz' : ''].filter(Boolean).join('\n\n'))}`,
+        `DESCRIPTION:${escapeICS(buildCalendarDescription(a))}`,
         'END:VEVENT',
         'END:VCALENDAR'
       ];
