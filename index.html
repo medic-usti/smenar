@@ -434,27 +434,28 @@
     function escapeICS(s){ return (s||'').toString().replace(/\\/g,'\\\\').replace(/\n/g,'\\n').replace(/,/g,'\\,').replace(/;/g,'\\;'); }
     function buildCalendarDescription(a){
       const lines = [];
-      if(a?.notePublic) lines.push(`Poznámka: ${a.notePublic}`);
-
-      if(a?.isCourse){
-        const members = Array.isArray(a?.courseMembers) ? a.courseMembers : [];
-        const memberNames = members.map(uid => getUserById(uid)?.name || uid).join(', ');
-        const cap = Number.isFinite(a?.courseCap) ? a.courseCap : 0;
-        lines.push(`Kurz ${members.length}/${cap}${memberNames ? ` — ${memberNames}` : ''}`);
-      } else {
-        const roleLines = getPublicRoleKeys().map(roleKey => {
-          const ids = Array.isArray(a?.signups?.[roleKey]) ? a.signups[roleKey] : [];
-          const names = ids.map(uid => getUserById(uid)?.name || uid).join(', ');
-          const cap = a?.capacity?.[roleKey] || 0;
-          return `${roleLabel(roleKey)} ${ids.length}/${cap}${names ? ` — ${names}` : ''}`;
-        });
-        if(roleLines.length) lines.push(...roleLines);
-      }
-
+      if(a?.title) lines.push(`Akce: ${a.title}`);
+      if(a?.notePublic) lines.push(`Co se dělá: ${a.notePublic}`);
       if(a?.tech) lines.push(`Technika: ${a.tech}`);
-      return lines.filter(Boolean).join('
+      if(a?.isCourse) lines.push('Typ: Kurz');
 
-');
+      const signupLines = [];
+      const roleKeys = Object.keys(a?.signups || {});
+      for(const roleKey of roleKeys){
+        const ids = Array.isArray(a?.signups?.[roleKey]) ? a.signups[roleKey] : [];
+        if(!ids.length) continue;
+        const names = ids.map(uid => getUserById(uid)?.name || uid).join(', ');
+        signupLines.push(`${roleLabel(roleKey)}: ${names}`);
+      }
+      if(Array.isArray(a?.courseMembers) && a.courseMembers.length){
+        const courseNames = a.courseMembers.map(uid => getUserById(uid)?.name || uid).join(', ');
+        signupLines.push(`Členové kurzu: ${courseNames}`);
+      }
+      if(signupLines.length){
+        lines.push(`Zapsaní na akci:
+${signupLines.join('\n')}`);
+      }
+      return lines.filter(Boolean).join('\n\n');
     }
     function eventDateParts(a){
       const date = a?.date || today();
@@ -474,11 +475,15 @@
     function createGoogleCalendarLink(a){
       const parts = eventDateParts(a);
       if(!parts) return '#';
+      const detailsParts = [];
+      if(a?.notePublic) detailsParts.push(`Poznámka: ${a.notePublic}`);
+      if(a?.tech) detailsParts.push(`Technika: ${a.tech}`);
+      if(a?.isCourse) detailsParts.push('Typ: Kurz');
       const params = new URLSearchParams({
         action:'TEMPLATE',
         text: a?.title || 'Událost',
         dates: `${toGoogleCalendarDateLocal(parts.start)}/${toGoogleCalendarDateLocal(parts.end)}`,
-        details: buildCalendarDescription(a),
+        details: detailsParts.join('\n\n'),
         location: a?.location || ''
       });
       return `https://calendar.google.com/calendar/render?${params.toString()}`;
