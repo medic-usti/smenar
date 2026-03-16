@@ -432,38 +432,61 @@
 
     function pad2(n){ return String(n).padStart(2,'0'); }
     function escapeICS(s){ return (s||'').toString().replace(/\\/g,'\\\\').replace(/\n/g,'\\n').replace(/,/g,'\\,').replace(/;/g,'\\;'); }
-    
-function buildCalendarDescription(a){
-  const lines = [];
-  if(a?.notePublic){
-    lines.push(`Poznámka: ${a.notePublic}`);
-  }
+    function buildCalendarDescription(a){
+      const lines = [];
+      const note = ((a && a.notePublic) ? String(a.notePublic) : '').trim();
+      lines.push('Poznámka: ' + (note || '—'));
 
-  const roleLines = [];
-  const roles = Object.keys(a?.capacity || {});
-  for(const r of roles){
-    const cap = a.capacity?.[r] || 0;
-    const ids = Array.isArray(a?.signups?.[r]) ? a.signups[r] : [];
-    const cur = ids.length;
-    const names = ids.map(uid => getUserById(uid)?.name || uid).join(', ');
-    const namePart = names ? ` — ${names}` : '';
-    roleLines.push(`${roleLabel(r)} ${cur}/${cap}${namePart}`);
-  }
+      const makeRoleLine = (label, keys) => {
+        const keyList = Array.isArray(keys) ? keys : [keys];
+        let current = 0;
+        let capacity = 0;
+        const names = [];
 
-  if(roleLines.length){
-    lines.push('');
-    lines.push(...roleLines);
-  }
+        for (const key of keyList) {
+          capacity += Number((a && a.capacity && a.capacity[key]) || 0);
+          const ids = (a && a.signups && Array.isArray(a.signups[key])) ? a.signups[key] : [];
+          current += ids.length;
+          for (const uid of ids) {
+            names.push((getUserById(uid) || {}).name || uid);
+          }
+        }
 
-  if(a?.tech){
-    lines.push('');
-    lines.push(`Technika: ${a.tech}`);
-  }
+        const uniqueNames = [...new Set(names)];
+        const suffix = uniqueNames.length ? ' — ' + uniqueNames.join(', ') : '';
+        return label + ' ' + current + '/' + capacity + suffix;
+      };
 
-  return lines.join('
-');
-}
+      const roleLines = [];
+      roleLines.push(makeRoleLine('Řidič', 'ridic'));
 
+      const capObj = (a && a.capacity) || {};
+      const signObj = (a && a.signups) || {};
+      const hasZza = Object.prototype.hasOwnProperty.call(capObj, 'zza') || Object.prototype.hasOwnProperty.call(signObj, 'zza');
+      const hasZdravotnik = Object.prototype.hasOwnProperty.call(capObj, 'zdravotnik') || Object.prototype.hasOwnProperty.call(signObj, 'zdravotnik');
+      if (hasZza || hasZdravotnik) {
+        roleLines.push(makeRoleLine('Zdravotník / ZZA', ['zdravotnik', 'zza']));
+      }
+
+      const otherPublicRoles = getPublicRoleKeys().filter(function(k){
+        return ['ridic', 'zza', 'zdravotnik'].indexOf(k) === -1;
+      });
+      for (const key of otherPublicRoles) {
+        roleLines.push(makeRoleLine(roleLabel(key), key));
+      }
+
+      if (roleLines.length) {
+        lines.push('');
+        lines.push.apply(lines, roleLines);
+      }
+
+      if (a && a.tech) {
+        lines.push('');
+        lines.push('Technika: ' + a.tech);
+      }
+
+      return lines.join('\n');
+    }
     function eventDateParts(a){
       const date = a?.date || today();
       const from = safeHHMM(a?.timeFrom) || '08:00';
@@ -481,19 +504,15 @@ function buildCalendarDescription(a){
     }
     function createGoogleCalendarLink(a){
       const parts = eventDateParts(a);
-      if(!parts) return '#';
-      const detailsParts = [];
-      if(a?.notePublic) detailsParts.push(`Poznámka: ${a.notePublic}`);
-      if(a?.tech) detailsParts.push(`Technika: ${a.tech}`);
-      if(a?.isCourse) detailsParts.push('Typ: Kurz');
+      if (!parts) return '#';
       const params = new URLSearchParams({
-        action:'TEMPLATE',
-        text: a?.title || 'Událost',
-        dates: `${toGoogleCalendarDateLocal(parts.start)}/${toGoogleCalendarDateLocal(parts.end)}`,
-        details: detailsParts.join('\n\n'),
-        location: a?.location || ''
+        action: 'TEMPLATE',
+        text: (a && a.title) || 'Událost',
+        dates: toGoogleCalendarDateLocal(parts.start) + '/' + toGoogleCalendarDateLocal(parts.end),
+        details: buildCalendarDescription(a),
+        location: (a && a.location) || ''
       });
-      return `https://calendar.google.com/calendar/render?${params.toString()}`;
+      return 'https://calendar.google.com/calendar/render?' + params.toString();
     }
     function downloadICS(aid){
       const a = ACTIONS.find(x=>x.id===aid) || ARCHIVE.find(x=>x.id===aid);
