@@ -431,54 +431,39 @@
 
 
     function pad2(n){ return String(n).padStart(2,'0'); }
-    function escapeICS(s){ return (s||'').toString().replace(/\/g,'\').replace(/
-/g,'
-').replace(/,/g,'\,').replace(/;/g,'\;'); }
-    function buildCalendarDescription(a){
-      const lines = [];
-      lines.push(`Poznámka: ${a?.notePublic || '—'}`);
-      lines.push('');
+    function escapeICS(s){ return (s||'').toString().replace(/\\/g,'\\\\').replace(/\n/g,'\\n').replace(/,/g,'\\,').replace(/;/g,'\\;'); }
+    
+function buildCalendarDescription(a){
+  const lines = [];
+  if(a?.notePublic){
+    lines.push(`Poznámka: ${a.notePublic}`);
+  }
 
-      const signups = a?.signups || {};
-      const capacity = a?.capacity || {};
-      const roleOrder = getPublicRoleKeys();
-      const handled = new Set();
+  const roleLines = [];
+  const roles = Object.keys(a?.capacity || {});
+  for(const r of roles){
+    const cap = a.capacity?.[r] || 0;
+    const ids = Array.isArray(a?.signups?.[r]) ? a.signups[r] : [];
+    const cur = ids.length;
+    const names = ids.map(uid => getUserById(uid)?.name || uid).join(', ');
+    const namePart = names ? ` — ${names}` : '';
+    roleLines.push(`${roleLabel(r)} ${cur}/${cap}${namePart}`);
+  }
 
-      if(roleOrder.includes('ridic')){
-        const ids = Array.isArray(signups.ridic) ? signups.ridic : [];
-        const names = ids.map(uid => getUserById(uid)?.name || uid).join(', ');
-        lines.push(`Řidič ${ids.length}/${capacity.ridic || 0}${names ? ` — ${names}` : ''}`);
-        handled.add('ridic');
-      }
+  if(roleLines.length){
+    lines.push('');
+    lines.push(...roleLines);
+  }
 
-      if(roleOrder.includes('zza') || roleOrder.includes('zdravotnik')){
-        const zzaIds = Array.isArray(signups.zza) ? signups.zza : [];
-        const zdravIds = Array.isArray(signups.zdravotnik) ? signups.zdravotnik : [];
-        const allIds = [...zzaIds, ...zdravIds];
-        const names = allIds.map(uid => getUserById(uid)?.name || uid).join(', ');
-        lines.push(`Zdravotník / ZZA ${allIds.length}/${(capacity.zza || 0) + (capacity.zdravotnik || 0)}${names ? ` — ${names}` : ''}`);
-        handled.add('zza');
-        handled.add('zdravotnik');
-      }
+  if(a?.tech){
+    lines.push('');
+    lines.push(`Technika: ${a.tech}`);
+  }
 
-      for(const roleKey of roleOrder){
-        if(handled.has(roleKey)) continue;
-        const ids = Array.isArray(signups[roleKey]) ? signups[roleKey] : [];
-        const names = ids.map(uid => getUserById(uid)?.name || uid).join(', ');
-        lines.push(`${roleLabel(roleKey)} ${ids.length}/${capacity[roleKey] || 0}${names ? ` — ${names}` : ''}`);
-      }
-
-      if(Array.isArray(a?.courseMembers) && a.courseMembers.length){
-        const courseNames = a.courseMembers.map(uid => getUserById(uid)?.name || uid).join(', ');
-        lines.push(`Členové kurzu ${a.courseMembers.length}/${a.courseMembers.length}${courseNames ? ` — ${courseNames}` : ''}`);
-      }
-
-      lines.push('');
-      lines.push(`Technika: ${a?.tech || '—'}`);
-      if(a?.isCourse) lines.push('', 'Typ: Kurz');
-      return lines.join('
+  return lines.join('
 ');
-    }
+}
+
     function eventDateParts(a){
       const date = a?.date || today();
       const from = safeHHMM(a?.timeFrom) || '08:00';
@@ -497,11 +482,15 @@
     function createGoogleCalendarLink(a){
       const parts = eventDateParts(a);
       if(!parts) return '#';
+      const detailsParts = [];
+      if(a?.notePublic) detailsParts.push(`Poznámka: ${a.notePublic}`);
+      if(a?.tech) detailsParts.push(`Technika: ${a.tech}`);
+      if(a?.isCourse) detailsParts.push('Typ: Kurz');
       const params = new URLSearchParams({
         action:'TEMPLATE',
         text: a?.title || 'Událost',
         dates: `${toGoogleCalendarDateLocal(parts.start)}/${toGoogleCalendarDateLocal(parts.end)}`,
-        details: buildCalendarDescription(a),
+        details: detailsParts.join('\n\n'),
         location: a?.location || ''
       });
       return `https://calendar.google.com/calendar/render?${params.toString()}`;
