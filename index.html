@@ -431,31 +431,50 @@
 
 
     function pad2(n){ return String(n).padStart(2,'0'); }
-    function escapeICS(s){ return (s||'').toString().replace(/\\/g,'\\\\').replace(/\n/g,'\\n').replace(/,/g,'\\,').replace(/;/g,'\\;'); }
-    function buildCalendarDescription(a){
+    function escapeICS(s){ return (s||'').toString().replace(/\/g,'\').replace(/
+/g,'
+').replace(/,/g,'\,').replace(/;/g,'\;'); }
+    function roleEmoji(roleKey){
+      const map = {
+        ridic:'🚑',
+        zza:'🩺',
+        zdravotnik:'🩺',
+        zachranar:'⛑️',
+        zdravotnicky_zachranar:'⛑️'
+      };
+      return map[roleKey] || '•';
+    }
+    function buildCalendarRoleLines(a, withEmoji=false){
       const lines = [];
-      if(a?.title) lines.push(`Akce: ${a.title}`);
-      if(a?.notePublic) lines.push(`Co se dělá: ${a.notePublic}`);
-      if(a?.tech) lines.push(`Technika: ${a.tech}`);
-      if(a?.isCourse) lines.push('Typ: Kurz');
-
-      const signupLines = [];
-      const roleKeys = Object.keys(a?.signups || {});
-      for(const roleKey of roleKeys){
-        const ids = Array.isArray(a?.signups?.[roleKey]) ? a.signups[roleKey] : [];
-        if(!ids.length) continue;
+      const publicRoles = (ROLES||[]).filter(r=>r.isPublic);
+      for(const r of publicRoles){
+        const ids = Array.isArray(a?.signups?.[r.key]) ? a.signups[r.key] : [];
         const names = ids.map(uid => getUserById(uid)?.name || uid).join(', ');
-        signupLines.push(`${roleLabel(roleKey)}: ${names}`);
+        const cap = Number(a?.capacity?.[r.key] || 0);
+        const prefix = withEmoji ? `${roleEmoji(r.key)} ` : '';
+        lines.push(`${prefix}${roleLabel(r.key)} ${ids.length}/${cap} — ${names || ''}`.trimEnd());
       }
       if(Array.isArray(a?.courseMembers) && a.courseMembers.length){
         const courseNames = a.courseMembers.map(uid => getUserById(uid)?.name || uid).join(', ');
-        signupLines.push(`Členové kurzu: ${courseNames}`);
+        lines.push(`${withEmoji ? '🎓 ' : ''}Členové kurzu ${a.courseMembers.length}/${a.courseMembers.length} — ${courseNames}`);
       }
-      if(signupLines.length){
-        lines.push(`Zapsaní na akci:
-${signupLines.join('\n')}`);
+      return lines;
+    }
+    function buildCalendarDescription(a, withEmoji=false){
+      const lines = [];
+      lines.push(`Poznámka: ${a?.notePublic || '—'}`);
+
+      const roleLines = buildCalendarRoleLines(a, withEmoji);
+      if(roleLines.length){
+        lines.push('');
+        lines.push(...roleLines);
       }
-      return lines.filter(Boolean).join('\n\n');
+
+      lines.push('');
+      lines.push(`Technika: ${a?.tech || '—'}`);
+      if(a?.isCourse) lines.push(`${withEmoji ? '🎓 ' : ''}Typ: Kurz`);
+      return lines.join('
+');
     }
     function eventDateParts(a){
       const date = a?.date || today();
@@ -475,15 +494,11 @@ ${signupLines.join('\n')}`);
     function createGoogleCalendarLink(a){
       const parts = eventDateParts(a);
       if(!parts) return '#';
-      const detailsParts = [];
-      if(a?.notePublic) detailsParts.push(`Poznámka: ${a.notePublic}`);
-      if(a?.tech) detailsParts.push(`Technika: ${a.tech}`);
-      if(a?.isCourse) detailsParts.push('Typ: Kurz');
       const params = new URLSearchParams({
         action:'TEMPLATE',
         text: a?.title || 'Událost',
         dates: `${toGoogleCalendarDateLocal(parts.start)}/${toGoogleCalendarDateLocal(parts.end)}`,
-        details: detailsParts.join('\n\n'),
+        details: buildCalendarDescription(a, true),
         location: a?.location || ''
       });
       return `https://calendar.google.com/calendar/render?${params.toString()}`;
