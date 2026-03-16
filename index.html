@@ -485,6 +485,15 @@
         lines.push('Technika: ' + a.tech);
       }
 
+      
+      // čas exportu
+      const now = new Date();
+      const exportTime =
+        now.toLocaleDateString('cs-CZ') + ' ' +
+        now.toLocaleTimeString('cs-CZ', {hour:'2-digit', minute:'2-digit'});
+      lines.push('');
+      lines.push('Exportováno: ' + exportTime);
+
       return lines.join('\n');
     }
     function eventDateParts(a){
