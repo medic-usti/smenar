@@ -431,31 +431,53 @@
 
 
     function pad2(n){ return String(n).padStart(2,'0'); }
-    function escapeICS(s){ return (s||'').toString().replace(/\\/g,'\\\\').replace(/\n/g,'\\n').replace(/,/g,'\\,').replace(/;/g,'\\;'); }
+    function escapeICS(s){ return (s||'').toString().replace(/\/g,'\').replace(/
+/g,'
+').replace(/,/g,'\,').replace(/;/g,'\;'); }
     function buildCalendarDescription(a){
       const lines = [];
-      if(a?.title) lines.push(`Akce: ${a.title}`);
-      if(a?.notePublic) lines.push(`Co se dělá: ${a.notePublic}`);
-      if(a?.tech) lines.push(`Technika: ${a.tech}`);
-      if(a?.isCourse) lines.push('Typ: Kurz');
+      lines.push(`Poznámka: ${a?.notePublic || '—'}`);
+      lines.push('');
 
-      const signupLines = [];
-      const roleKeys = Object.keys(a?.signups || {});
-      for(const roleKey of roleKeys){
-        const ids = Array.isArray(a?.signups?.[roleKey]) ? a.signups[roleKey] : [];
-        if(!ids.length) continue;
+      const signups = a?.signups || {};
+      const capacity = a?.capacity || {};
+      const roleOrder = getPublicRoleKeys();
+      const handled = new Set();
+
+      if(roleOrder.includes('ridic')){
+        const ids = Array.isArray(signups.ridic) ? signups.ridic : [];
         const names = ids.map(uid => getUserById(uid)?.name || uid).join(', ');
-        signupLines.push(`${roleLabel(roleKey)}: ${names}`);
+        lines.push(`Řidič ${ids.length}/${capacity.ridic || 0}${names ? ` — ${names}` : ''}`);
+        handled.add('ridic');
       }
+
+      if(roleOrder.includes('zza') || roleOrder.includes('zdravotnik')){
+        const zzaIds = Array.isArray(signups.zza) ? signups.zza : [];
+        const zdravIds = Array.isArray(signups.zdravotnik) ? signups.zdravotnik : [];
+        const allIds = [...zzaIds, ...zdravIds];
+        const names = allIds.map(uid => getUserById(uid)?.name || uid).join(', ');
+        lines.push(`Zdravotník / ZZA ${allIds.length}/${(capacity.zza || 0) + (capacity.zdravotnik || 0)}${names ? ` — ${names}` : ''}`);
+        handled.add('zza');
+        handled.add('zdravotnik');
+      }
+
+      for(const roleKey of roleOrder){
+        if(handled.has(roleKey)) continue;
+        const ids = Array.isArray(signups[roleKey]) ? signups[roleKey] : [];
+        const names = ids.map(uid => getUserById(uid)?.name || uid).join(', ');
+        lines.push(`${roleLabel(roleKey)} ${ids.length}/${capacity[roleKey] || 0}${names ? ` — ${names}` : ''}`);
+      }
+
       if(Array.isArray(a?.courseMembers) && a.courseMembers.length){
         const courseNames = a.courseMembers.map(uid => getUserById(uid)?.name || uid).join(', ');
-        signupLines.push(`Členové kurzu: ${courseNames}`);
+        lines.push(`Členové kurzu ${a.courseMembers.length}/${a.courseMembers.length}${courseNames ? ` — ${courseNames}` : ''}`);
       }
-      if(signupLines.length){
-        lines.push(`Zapsaní na akci:
-${signupLines.join('\n')}`);
-      }
-      return lines.filter(Boolean).join('\n\n');
+
+      lines.push('');
+      lines.push(`Technika: ${a?.tech || '—'}`);
+      if(a?.isCourse) lines.push('', 'Typ: Kurz');
+      return lines.join('
+');
     }
     function eventDateParts(a){
       const date = a?.date || today();
@@ -475,15 +497,11 @@ ${signupLines.join('\n')}`);
     function createGoogleCalendarLink(a){
       const parts = eventDateParts(a);
       if(!parts) return '#';
-      const detailsParts = [];
-      if(a?.notePublic) detailsParts.push(`Poznámka: ${a.notePublic}`);
-      if(a?.tech) detailsParts.push(`Technika: ${a.tech}`);
-      if(a?.isCourse) detailsParts.push('Typ: Kurz');
       const params = new URLSearchParams({
         action:'TEMPLATE',
         text: a?.title || 'Událost',
         dates: `${toGoogleCalendarDateLocal(parts.start)}/${toGoogleCalendarDateLocal(parts.end)}`,
-        details: detailsParts.join('\n\n'),
+        details: buildCalendarDescription(a),
         location: a?.location || ''
       });
       return `https://calendar.google.com/calendar/render?${params.toString()}`;
