@@ -422,6 +422,76 @@
       return m.charAt(0).toUpperCase()+m.slice(1);
     }
 
+
+    function pad2(n){ return String(n).padStart(2,'0'); }
+    function escapeICS(s){ return (s||'').toString().replace(/\\/g,'\\\\').replace(/\n/g,'\\n').replace(/,/g,'\\,').replace(/;/g,'\\;'); }
+    function eventDateParts(a){
+      const date = a?.date || today();
+      const from = safeHHMM(a?.timeFrom) || '08:00';
+      const to = safeHHMM(a?.timeTo) || from;
+      const start = new Date(`${date}T${from}`);
+      let end = new Date(`${date}T${to}`);
+      if(isNaN(start.getTime())) return null;
+      if(isNaN(end.getTime()) || end.getTime() <= start.getTime()){
+        end = new Date(start.getTime() + 2*60*60*1000);
+      }
+      return { start, end };
+    }
+    function toGoogleCalendarDateLocal(d){
+      return `${d.getFullYear()}${pad2(d.getMonth()+1)}${pad2(d.getDate())}T${pad2(d.getHours())}${pad2(d.getMinutes())}00`;
+    }
+    function createGoogleCalendarLink(a){
+      const parts = eventDateParts(a);
+      if(!parts) return '#';
+      const detailsParts = [];
+      if(a?.notePublic) detailsParts.push(`Poznámka: ${a.notePublic}`);
+      if(a?.tech) detailsParts.push(`Technika: ${a.tech}`);
+      if(a?.isCourse) detailsParts.push('Typ: Kurz');
+      const params = new URLSearchParams({
+        action:'TEMPLATE',
+        text: a?.title || 'Událost',
+        dates: `${toGoogleCalendarDateLocal(parts.start)}/${toGoogleCalendarDateLocal(parts.end)}`,
+        details: detailsParts.join('\n\n'),
+        location: a?.location || ''
+      });
+      return `https://calendar.google.com/calendar/render?${params.toString()}`;
+    }
+    function downloadICS(aid){
+      const a = ACTIONS.find(x=>x.id===aid) || ARCHIVE.find(x=>x.id===aid);
+      if(!a) return;
+      const parts = eventDateParts(a);
+      if(!parts){ alert('Nepodařilo se připravit datum akce.'); return; }
+      const dtStamp = new Date();
+      const icsDate = d => `${d.getUTCFullYear()}${pad2(d.getUTCMonth()+1)}${pad2(d.getUTCDate())}T${pad2(d.getUTCHours())}${pad2(d.getUTCMinutes())}${pad2(d.getUTCSeconds())}Z`;
+      const lines = [
+        'BEGIN:VCALENDAR',
+        'VERSION:2.0',
+        'PRODID:-//Smenar//Moje akce//CS',
+        'CALSCALE:GREGORIAN',
+        'BEGIN:VEVENT',
+        `UID:${escapeICS((a.id||uid()) + '@smenar.local')}`,
+        `DTSTAMP:${icsDate(dtStamp)}`,
+        `DTSTART:${icsDate(parts.start)}`,
+        `DTEND:${icsDate(parts.end)}`,
+        `SUMMARY:${escapeICS(a.title || 'Událost')}`,
+        `LOCATION:${escapeICS(a.location || '')}`,
+        `DESCRIPTION:${escapeICS([a.notePublic ? 'Poznámka: ' + a.notePublic : '', a.tech ? 'Technika: ' + a.tech : '', a.isCourse ? 'Typ: Kurz' : ''].filter(Boolean).join('\n\n'))}`,
+        'END:VEVENT',
+        'END:VCALENDAR'
+      ];
+      const blob = new Blob([lines.join('\r\n')], { type:'text/calendar;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      const safeName = (a.title || 'udalost').toString().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-zA-Z0-9._-]+/g,'-').replace(/^-+|-+$/g,'') || 'udalost';
+      link.download = `${safeName}.ics`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(()=>URL.revokeObjectURL(url), 1000);
+    }
+    window.downloadICS = downloadICS;
+
     /* ===== Header + Login ===== */
     function renderHeader(){
       const el=$('#hdr'); if(!ME){ el.innerHTML=''; return; }
@@ -924,11 +994,16 @@
 
       const historyBlock = renderEventHistory(a.id, 30);
 
+      const gcalLink = createGoogleCalendarLink(a);
       const html = `
         <div class="muted">${a.date} • ${a.location||'—'} • ${(a.timeFrom||'')}${a.timeTo?('–'+a.timeTo):''}</div>
         ${a.signupUnlock? `<div class="muted small">Odemknutí přihlašování: <b>${new Date(a.signupUnlock).toLocaleString()}</b></div>` : ''}
 
         <h4 style="margin:10px 0 6px 0">${h(a.title||'Událost')}${kurzBadge}</h4>
+        <div class="row" style="margin-bottom:8px;gap:8px">
+          <a class="btn" href="${gcalLink}" target="_blank" rel="noopener noreferrer">Přidat do Google Kalendáře</a>
+          <button class="btn" type="button" onclick="downloadICS('${a.id}')">Stáhnout ICS</button>
+        </div>
 
         <div class="row" style="align-items:flex-start">
           <div style="flex:1; min-width:260px">${techBox}</div>
