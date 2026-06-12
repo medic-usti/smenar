@@ -116,6 +116,11 @@
     .occ-role{font-size:12px; border:1px solid var(--border); border-radius:999px; padding:2px 8px; background:#fff}
     .occ-ok{color:#6b7280}
     .occ-missing{color:#b91c1c; border-color:#fecaca; background:#fef2f2; font-weight:600}
+    .progress-wrap{width:100%;height:14px;border:1px solid var(--border);border-radius:999px;background:#eef2f7;overflow:hidden}
+    .progress-bar{height:100%;background:#0f172a;border-radius:999px;transition:width .18s ease}
+    .skill-row{display:grid;grid-template-columns:auto 1fr minmax(180px,260px);gap:10px;align-items:start;padding:10px 0;border-bottom:1px solid var(--border)}
+    .skill-row:last-child{border-bottom:0}
+    @media (max-width:640px){.skill-row{grid-template-columns:1fr}.skill-row input[type=checkbox]{width:22px;height:22px}}
   </style>
 </head>
 <body>
@@ -164,11 +169,11 @@
     window.supabase = supabase; // pro ladění v konzoli
 
     /* ===== Stav ===== */
-    const DB_USERS="users", DB_ACTIONS="actions", DB_ROLES="roles", DB_SESSION="session", DB_ACTIVITY="activity", DB_ARCHIVE="archive", DB_FORCED="forced";
-    let USERS=[], ACTIONS=[], ROLES=[], ACTIVITY=[], ARCHIVE=[], FORCED=[];
+    const DB_USERS="users", DB_ACTIONS="actions", DB_ROLES="roles", DB_SESSION="session", DB_ACTIVITY="activity", DB_ARCHIVE="archive", DB_FORCED="forced", DB_SKILLS="skills", DB_SKILL_PROGRESS="skill_progress";
+    let USERS=[], ACTIONS=[], ROLES=[], ACTIVITY=[], ARCHIVE=[], FORCED=[], SKILLS=[], SKILL_PROGRESS=[];
     let ME=null, ACTIVE_ROLE=null;
     let CURRENT_VIEW='events', CURRENT_EDIT_ID=null;
-    let SELECTED_USER_ID=null;
+    let SELECTED_USER_ID=null, SELECTED_LEKTOR_USER_ID=null;
     let DUPLICATE_PREFILL=null;
     let DB_ONLINE=false, DB_LAST_TS=0, DB_LAST_SRC='—';
 
@@ -227,7 +232,7 @@
       supabase
         .channel('kv-realtime')
         .on('postgres_changes', { event:'*', schema:'public', table:'kv',
-          filter:"key=in.(users,roles,actions,archive,activity,forced)" }, (payload)=>{
+          filter:"key=in.(users,roles,actions,archive,activity,forced,skills,skill_progress)" }, (payload)=>{
             const row=payload.new || payload.old;
             if(!row?.key) return;
             if(CURRENT_VIEW==='create' || CURRENT_VIEW==='login') return;
@@ -239,6 +244,8 @@
               case DB_ARCHIVE:ARCHIVE=arr;break;
               case DB_ACTIVITY:ACTIVITY=arr;break;
               case DB_FORCED:FORCED=arr;break;
+              case DB_SKILLS:SKILLS=arr;break;
+              case DB_SKILL_PROGRESS:SKILL_PROGRESS=arr;break;
             }
             DB_ONLINE=true; DB_LAST_TS=Date.now(); DB_LAST_SRC='realtime';
             _lastRealtime=Date.now();
@@ -260,8 +267,8 @@
     const _eq=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
     async function refreshFromDB(){
       try{
-        const [u,r,a,ar,ac,fo]=await Promise.all([
-          kvLoad(DB_USERS),kvLoad(DB_ROLES),kvLoad(DB_ACTIONS),kvLoad(DB_ARCHIVE),kvLoad(DB_ACTIVITY),kvLoad(DB_FORCED)
+        const [u,r,a,ar,ac,fo,sk,sp]=await Promise.all([
+          kvLoad(DB_USERS),kvLoad(DB_ROLES),kvLoad(DB_ACTIONS),kvLoad(DB_ARCHIVE),kvLoad(DB_ACTIVITY),kvLoad(DB_FORCED),kvLoad(DB_SKILLS),kvLoad(DB_SKILL_PROGRESS)
         ]);
         let changed=false;
         if(!_eq(USERS,u)){USERS=u;changed=true;}
@@ -270,6 +277,8 @@
         if(!_eq(ARCHIVE,ar)){ARCHIVE=ar;changed=true;}
         if(!_eq(ACTIVITY,ac)){ACTIVITY=ac;changed=true;}
         if(!_eq(FORCED,fo)){FORCED=fo;changed=true;}
+        if(!_eq(SKILLS,sk)){SKILLS=sk;changed=true;}
+        if(!_eq(SKILL_PROGRESS,sp)){SKILL_PROGRESS=sp;changed=true;}
         if(changed){ DB_ONLINE=true; DB_LAST_TS=Date.now(); DB_LAST_SRC='fallback'; renderApp(); checkForcedLogout(); }
       }catch(err){
         console.warn('fallback refresh error',err);
@@ -287,7 +296,8 @@
           {key:'zza',label:'ZZA',isPublic:true},
           {key:'zdravotnik',label:'Zdravotník',isPublic:true},
           {key:'admin',label:'Admin',isPublic:false},
-          {key:'support',label:'Podpora',isPublic:false}
+          {key:'support',label:'Podpora',isPublic:false},
+          {key:'lektor',label:'Lektor',isPublic:false}
         ];
         await kvSave(DB_ROLES,ROLES); changed=true;
       }
@@ -303,6 +313,8 @@
       if(!ARCHIVE.length){ await kvSave(DB_ARCHIVE,[]); changed=true; }
       if(!ACTIVITY.length){ await kvSave(DB_ACTIVITY,[]); changed=true; }
       if(!FORCED.length){ await kvSave(DB_FORCED,[]); changed=true; }
+      if(!Array.isArray(SKILLS)){ SKILLS=[]; await kvSave(DB_SKILLS,SKILLS); changed=true; }
+      if(!Array.isArray(SKILL_PROGRESS)){ SKILL_PROGRESS=[]; await kvSave(DB_SKILL_PROGRESS,SKILL_PROGRESS); changed=true; }
 
       if(changed){ DB_LAST_SRC='seed'; DB_LAST_TS=Date.now(); }
     }
@@ -311,18 +323,23 @@
       const must=[
         {key:'admin',label:'Admin',isPublic:false},
         {key:'support',label:'Podpora',isPublic:false},
+        {key:'lektor',label:'Lektor',isPublic:false},
         {key:'ridic',label:'Řidič',isPublic:true},
         {key:'zza',label:'ZZA',isPublic:true},
         {key:'zdravotnik',label:'Zdravotník',isPublic:true}
       ];
       let changed=false;
-      for(const r of must){ if(!ROLES.find(x=>x.key===r.key)){ ROLES.push(r); changed=true; } }
+      for(const r of must){
+        const existing = ROLES.find(x=>x.key===r.key);
+        if(!existing){ ROLES.push(r); changed=true; }
+        else if(r.key==='lektor' && existing.isPublic!==false){ existing.isPublic=false; changed=true; }
+      }
       if(changed) await kvSave(DB_ROLES,ROLES);
     }
     async function init(){
       try{
-        [USERS,ROLES,ACTIONS,ARCHIVE,ACTIVITY,FORCED]=await Promise.all([
-          kvLoad(DB_USERS),kvLoad(DB_ROLES),kvLoad(DB_ACTIONS),kvLoad(DB_ARCHIVE),kvLoad(DB_ACTIVITY),kvLoad(DB_FORCED)
+        [USERS,ROLES,ACTIONS,ARCHIVE,ACTIVITY,FORCED,SKILLS,SKILL_PROGRESS]=await Promise.all([
+          kvLoad(DB_USERS),kvLoad(DB_ROLES),kvLoad(DB_ACTIONS),kvLoad(DB_ARCHIVE),kvLoad(DB_ACTIVITY),kvLoad(DB_FORCED),kvLoad(DB_SKILLS),kvLoad(DB_SKILL_PROGRESS)
         ]);
         DB_ONLINE=true; DB_LAST_TS=Date.now(); DB_LAST_SRC='init';
         await seedIfEmpty(); await ensureCoreRoles();
@@ -339,7 +356,9 @@
     function userHasRole(u,r){ return (u?.roles||[]).includes(r); }
     function isSupportUser(u){ return !!u && ((u.roles||[]).includes('support') || ((u?.name||'').trim().toLowerCase()==='podpora')); }
     function isPrivileged(){ return ME && (userHasRole(ME,'admin') || userHasRole(ME,'support')); }
-    function getPublicRoleKeys(){ return (ROLES||[]).filter(r=>r.isPublic).map(r=>r.key); }
+    function isLektorUser(u){ return !!u && (userHasRole(u,'lektor') || userHasRole(u,'admin') || userHasRole(u,'support')); }
+    function canSeeLektorPanel(){ return ME && isLektorUser(ME); }
+    function getPublicRoleKeys(){ return (ROLES||[]).filter(r=>r.isPublic && !['admin','support','lektor'].includes(r.key)).map(r=>r.key); }
     function roleLabel(k){ return (ROLES||[]).find(r=>r.key===k)?.label||k; }
     function getUserById(id){ return (USERS||[]).find(u=>u.id===id)||null; }
     function userPublicRoles(u){ const pubs=getPublicRoleKeys(); return (u?.roles||[]).filter(r=>pubs.includes(r)); }
@@ -591,6 +610,7 @@
           <span class="badge">${ME.name}</span>
           ${roleSel}
           ${publicNav}
+          ${canSeeLektorPanel()? `<button class="btn" type="button" onclick="viewLektor()">Lektor</button>` : ''}
           ${isPrivileged()? `
             <div class="menu" id="adminMenu">
               <button class="btn" id="adminBtn" type="button">Admin ▾</button>
@@ -1483,7 +1503,8 @@
         <div class="card">
           <label>Klíč<input class="input" id="er_key" value="${r.key}" disabled></label>
           <label>Popisek<input class="input" id="er_label" value="${r.label}"></label>
-          <label class="row" style="gap:6px"><input type="checkbox" id="er_pub" ${r.isPublic?'checked':''}> Veřejná role</label>
+          <label class="row" style="gap:6px"><input type="checkbox" id="er_pub" ${r.isPublic?'checked':''} ${r.key==='lektor'?'disabled':''}> Veřejná role</label>
+          ${r.key==='lektor'?'<div class="muted small">Lektor je interní oprávnění, proto se nesmí zobrazovat v požadavcích na dozor.</div>':''}
           <div class="row" style="justify-content:flex-end;margin-top:10px">
             <button class="btn" type="button" onclick="viewRoles()">Zpět</button>
             <button class="btn primary" type="button" onclick="saveRole()">Uložit</button>
@@ -1501,7 +1522,7 @@
       const label=document.getElementById('er_label').value.trim();
       const pub=document.getElementById('er_pub').checked;
       const r=ROLES.find(x=>x.key===key); if(!r) return;
-      r.label=label; r.isPublic=pub;
+      r.label=label; r.isPublic=(key==='lektor') ? false : pub;
       await kvSave(DB_ROLES, ROLES);
       toast('Role uložena', r.label);
       viewRoles();
@@ -1528,6 +1549,231 @@
       ROLES.push({key:k,label:l,isPublic:pub});
       await kvSave(DB_ROLES, ROLES);
       viewRoles();
+    }
+
+
+    /* ===== Lektor: checklist dovedností a progres členů ===== */
+    function getSkillRecord(userId, skillId){
+      return (SKILL_PROGRESS||[]).find(p=>p && p.userId===userId && p.skillId===skillId) || null;
+    }
+    function skillStatsForUser(userId){
+      const total = (SKILLS||[]).length;
+      const done = (SKILLS||[]).filter(s=>getSkillRecord(userId, s.id)).length;
+      const pct = total ? Math.round((done/total)*100) : 0;
+      return { total, done, pct };
+    }
+    function selectedUserForLektor(){
+      const visible = (USERS||[])
+        .filter(u=>u.isActive!==false)
+        .filter(canSeeUser)
+        .sort((a,b)=>(a.name||'').localeCompare(b.name||'', 'cs'));
+      if(!visible.length) return null;
+      const wanted = SELECTED_LEKTOR_USER_ID || ME?.id || visible[0].id;
+      return visible.find(u=>u.id===wanted) || visible[0];
+    }
+    function renderSkillProgressOverview(){
+      const visible = (USERS||[])
+        .filter(u=>u.isActive!==false)
+        .filter(canSeeUser)
+        .sort((a,b)=>(a.name||'').localeCompare(b.name||'', 'cs'));
+      if(!visible.length) return '<div class="muted">Žádní aktivní členové.</div>';
+      const rows = visible.map(u=>{
+        const st = skillStatsForUser(u.id);
+        return `
+          <tr>
+            <td>${h(u.name)}</td>
+            <td>${st.done}/${st.total}</td>
+            <td style="min-width:180px"><div class="progress-wrap"><div class="progress-bar" style="width:${st.pct}%"></div></div></td>
+            <td>${st.pct}%</td>
+            <td><button class="btn" type="button" onclick="SELECTED_LEKTOR_USER_ID='${u.id}'; viewLektor()">Otevřít</button></td>
+          </tr>`;
+      }).join('');
+      return `
+        <details style="margin-top:12px">
+          <summary><b>Přehled progresu všech členů</b></summary>
+          <div style="overflow:auto;margin-top:8px">
+            <table class="table">
+              <thead><tr><th>Člen</th><th>Hotovo</th><th>Progress</th><th>%</th><th>Akce</th></tr></thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
+        </details>`;
+    }
+    function renderSkillAdminBox(){
+      if(!isPrivileged()) return '';
+      const rows = (SKILLS||[]).map(s=>`
+        <div class="card" style="padding:10px;margin-top:8px">
+          <div class="grid2">
+            <label>Název bodu
+              <input class="input" id="skill_title_${s.id}" value="${h(s.title||'')}">
+            </label>
+            <label>Poznámka / popis
+              <input class="input" id="skill_desc_${s.id}" value="${h(s.desc||'')}">
+            </label>
+          </div>
+          <div class="row" style="justify-content:flex-end;margin-top:8px">
+            <button class="btn" type="button" onclick="saveSkill('${s.id}')">Uložit bod</button>
+            <button class="btn danger" type="button" onclick="deleteSkill('${s.id}')">Smazat</button>
+          </div>
+        </div>`).join('') || '<div class="muted">Zatím není vytvořený žádný bod.</div>';
+
+      return `
+        <details class="admin-box" style="margin-top:12px">
+          <summary><b>Správa checklistu</b> <span class="muted small">jen Admin / Podpora</span></summary>
+          <div style="margin-top:10px">
+            <div class="grid2">
+              <input id="newSkillTitle" class="input" placeholder="Nový bod, např. KPR + AED">
+              <input id="newSkillDesc" class="input" placeholder="Volitelná poznámka / popis">
+            </div>
+            <div class="row" style="justify-content:flex-end;margin-top:8px">
+              <button class="btn primary" type="button" onclick="addSkill()">Přidat bod</button>
+            </div>
+            ${rows}
+          </div>
+        </details>`;
+    }
+    function viewLektor(){
+      if(!canSeeLektorPanel()){ CURRENT_VIEW='events'; viewEvents(); return; }
+      CURRENT_VIEW='lektor';
+      const app=$('#app');
+      const target = selectedUserForLektor();
+      const targetId = target?.id || '';
+      SELECTED_LEKTOR_USER_ID = targetId;
+      const st = skillStatsForUser(targetId);
+      const usersOpts = (USERS||[])
+        .filter(u=>u.isActive!==false)
+        .filter(canSeeUser)
+        .sort((a,b)=>(a.name||'').localeCompare(b.name||'', 'cs'))
+        .map(u=>`<option value="${u.id}" ${u.id===targetId?'selected':''}>${h(u.name||u.id)}</option>`).join('');
+
+      const skillRows = (SKILLS||[]).map(s=>{
+        const rec = getSkillRecord(targetId, s.id);
+        const approved = rec ? `Schválil: <b>${h(rec.lecturerName||rec.lecturerId||'—')}</b><br>${rec.ts? new Date(rec.ts).toLocaleString() : '—'}` : '<span class="muted">Zatím neschváleno</span>';
+        return `
+          <div class="skill-row">
+            <div><input type="checkbox" class="lektorSkillCheck" value="${s.id}" ${rec?'checked':''}></div>
+            <div>
+              <div><b>${h(s.title||'Bod')}</b></div>
+              ${s.desc?`<div class="muted small prewrap">${h(s.desc)}</div>`:''}
+            </div>
+            <div class="small">${approved}</div>
+          </div>`;
+      }).join('') || '<div class="muted">Checklist je zatím prázdný. Admin ho vytvoří ve správě checklistu níže.</div>';
+
+      app.innerHTML=`
+        <h3>Lektor</h3>
+        <div class="card" style="margin-bottom:12px">
+          <div class="row" style="justify-content:space-between;align-items:flex-start">
+            <div>
+              <div><b>Progres člena</b></div>
+              <div class="muted small">Sekci vidí jen Lektor, Admin a Podpora. Role Lektor je interní, nepočítá se do dozorových požadavků.</div>
+            </div>
+            <div style="min-width:260px;flex:1;max-width:420px">
+              <select id="lektorUserSel" class="select">${usersOpts}</select>
+            </div>
+          </div>
+          <div style="margin-top:12px">
+            <div class="row" style="justify-content:space-between">
+              <b>${h(target?.name||'Člen')}</b>
+              <span class="badge">Hotovo ${st.done}/${st.total} • ${st.pct}%</span>
+            </div>
+            <div class="progress-wrap" style="margin-top:8px"><div class="progress-bar" style="width:${st.pct}%"></div></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="row" style="justify-content:space-between;align-items:center">
+            <h4 style="margin:0">Checklist dovedností</h4>
+            <button class="btn primary" type="button" onclick="saveLektorProgress()" ${targetId && SKILLS.length?'':'disabled'}>Uložit progres</button>
+          </div>
+          <div style="margin-top:8px">${skillRows}</div>
+          <div class="muted small" style="margin-top:8px">Když bod zaškrtneš a uložíš, uloží se k němu jméno lektora a čas schválení. Když bod odškrtneš a uložíš, potvrzení se smaže.</div>
+        </div>
+
+        <div class="card" style="margin-top:12px">
+          <h4 style="margin:0">Souhrn</h4>
+          ${renderSkillProgressOverview()}
+        </div>
+
+        ${renderSkillAdminBox()}
+      `;
+
+      const sel=document.getElementById('lektorUserSel');
+      if(sel){
+        sel.onchange=()=>{ SELECTED_LEKTOR_USER_ID=sel.value; viewLektor(); };
+      }
+      if(ME) resetAutoLogoutTimer();
+    }
+    async function addSkill(){
+      if(!isPrivileged()) return;
+      const title=(document.getElementById('newSkillTitle')?.value||'').trim();
+      const desc=(document.getElementById('newSkillDesc')?.value||'').trim();
+      if(!title){ alert('Vyplň název bodu.'); return; }
+      SKILLS.push({id:uid(),title,desc,createdAt:Date.now(),createdBy:ME?.id||null});
+      await kvSave(DB_SKILLS, SKILLS);
+      await logActivity('skill-add', null, null, title);
+      toast('Bod přidán', title);
+      viewLektor();
+    }
+    async function saveSkill(skillId){
+      if(!isPrivileged()) return;
+      const s=(SKILLS||[]).find(x=>x.id===skillId); if(!s) return;
+      const title=(document.getElementById('skill_title_'+skillId)?.value||'').trim();
+      const desc=(document.getElementById('skill_desc_'+skillId)?.value||'').trim();
+      if(!title){ alert('Název bodu nesmí být prázdný.'); return; }
+      s.title=title; s.desc=desc; s.updatedAt=Date.now(); s.updatedBy=ME?.id||null;
+      await kvSave(DB_SKILLS, SKILLS);
+      await logActivity('skill-edit', null, null, title);
+      toast('Bod uložen', title);
+      viewLektor();
+    }
+    async function deleteSkill(skillId){
+      if(!isPrivileged()) return;
+      const s=(SKILLS||[]).find(x=>x.id===skillId); if(!s) return;
+      if(!confirm(`Smazat bod „${s.title||'Bod'}“? Smažou se i všechna potvrzení tohoto bodu u členů.`)) return;
+      SKILLS=SKILLS.filter(x=>x.id!==skillId);
+      SKILL_PROGRESS=SKILL_PROGRESS.filter(p=>p.skillId!==skillId);
+      await kvSave(DB_SKILLS, SKILLS);
+      await kvSave(DB_SKILL_PROGRESS, SKILL_PROGRESS);
+      await logActivity('skill-delete', null, null, s.title||skillId);
+      toast('Bod smazán', s.title||'Bod');
+      viewLektor();
+    }
+    async function saveLektorProgress(){
+      if(!canSeeLektorPanel()) return;
+      const target = selectedUserForLektor();
+      if(!target){ alert('Vyber člena.'); return; }
+      const checked = new Set(Array.from(document.querySelectorAll('.lektorSkillCheck:checked')).map(i=>i.value));
+      const allSkillIds = new Set((SKILLS||[]).map(s=>s.id));
+      let changed=false;
+
+      for(const skill of (SKILLS||[])){
+        const rec = getSkillRecord(target.id, skill.id);
+        if(checked.has(skill.id) && !rec){
+          SKILL_PROGRESS.push({
+            userId: target.id,
+            skillId: skill.id,
+            lecturerId: ME?.id || null,
+            lecturerName: ME?.name || 'Lektor',
+            ts: Date.now()
+          });
+          changed=true;
+        }
+        if(!checked.has(skill.id) && rec){
+          SKILL_PROGRESS = SKILL_PROGRESS.filter(p=>!(p.userId===target.id && p.skillId===skill.id));
+          changed=true;
+        }
+      }
+
+      SKILL_PROGRESS = SKILL_PROGRESS.filter(p=>p && p.userId && p.skillId && allSkillIds.has(p.skillId));
+      if(changed){
+        await kvSave(DB_SKILL_PROGRESS, SKILL_PROGRESS);
+        await logActivity('skill-progress', null, null, `${target.name}: ${skillStatsForUser(target.id).done}/${(SKILLS||[]).length}`);
+        toast('Progres uložen', target.name);
+      }else{
+        toast('Bez změny', target.name);
+      }
+      viewLektor();
     }
 
     /* ===== Aktivita + Export + Loginy ===== */
@@ -1686,7 +1932,7 @@
       $('#app').innerHTML=`<h3>Export / Záloha</h3><div class="card"><div class="row"><button class="btn" type="button" onclick="downloadJson()">Stáhnout JSON</button></div></div>`;
     }
     function downloadJson(){
-      const data={users:USERS,roles:ROLES,actions:ACTIONS,archive:ARCHIVE,activity:ACTIVITY,forced:FORCED};
+      const data={users:USERS,roles:ROLES,actions:ACTIONS,archive:ARCHIVE,activity:ACTIVITY,forced:FORCED,skills:SKILLS,skill_progress:SKILL_PROGRESS};
       const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='smenar_backup.json'; a.click();
     }
 
@@ -1758,6 +2004,7 @@
         }
         if(!ME){ viewLogin(); return; }
         if((CURRENT_VIEW==='export' || CURRENT_VIEW==='logins') && !isSupportUser(ME)) CURRENT_VIEW='events';
+        if(CURRENT_VIEW==='lektor' && !canSeeLektorPanel()) CURRENT_VIEW='events';
 
         switch(CURRENT_VIEW){
           case 'create': viewCreateEvent(CURRENT_EDIT_ID); break;
@@ -1769,6 +2016,7 @@
           case 'logins': viewLogins(); break;
           case 'password': viewPassword(); break;
           case 'my-actions': viewMyActions(); break;
+          case 'lektor': viewLektor(); break;
           default: viewEvents();
         }
         
@@ -1791,6 +2039,15 @@
     window.viewActivity=viewActivity;
     window.viewExport=viewExport;
     window.viewLogins=viewLogins;
+    window.viewLektor=viewLektor;
+    window.addSkill=addSkill;
+    window.saveSkill=saveSkill;
+    window.deleteSkill=deleteSkill;
+    window.saveLektorProgress=saveLektorProgress;
+    Object.defineProperty(window, 'SELECTED_LEKTOR_USER_ID', {
+      get(){ return SELECTED_LEKTOR_USER_ID; },
+      set(v){ SELECTED_LEKTOR_USER_ID = v; }
+    });
     window.joinEvent=joinEvent;
     window.leaveEvent=leaveEvent;
     window.assignMember=assignMember;
