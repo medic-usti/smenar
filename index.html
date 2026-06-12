@@ -49,6 +49,7 @@
       #hdr > .row > .muted{order:2;min-width:160px;flex:1 1 160px}
       #hdr > .row > div:nth-of-type(1){order:3;display:flex;flex-wrap:wrap;gap:8px;width:100%}
       #hdr > .row > .menu{order:4;margin-left:auto}
+      #hdr > .row > .lektor-btn{order:4}
       #hdr > .row > button.btn:last-of-type{order:5}
       .menu .dropdown{right:0;left:auto;width:max-content;min-width:220px;max-width:min(92vw,320px)}
     }
@@ -294,6 +295,7 @@
         ROLES=[
           {key:'ridic',label:'Řidič',isPublic:true},
           {key:'zza',label:'ZZA',isPublic:true},
+          {key:'zdravotnik',label:'Zdravotník',isPublic:true},
           {key:'admin',label:'Admin',isPublic:false},
           {key:'support',label:'Podpora',isPublic:false},
           {key:'lektor',label:'Lektor',isPublic:false}
@@ -609,7 +611,6 @@
           <span class="badge">${ME.name}</span>
           ${roleSel}
           ${publicNav}
-          ${canSeeLektorPanel()? `<button class="btn" type="button" onclick="viewLektor()">Lektor</button>` : ''}
           ${isPrivileged()? `
             <div class="menu" id="adminMenu">
               <button class="btn" id="adminBtn" type="button">Admin ▾</button>
@@ -629,6 +630,7 @@
                 ${isSupportUser(ME)?`<button type="button" onclick="viewExport()">Export / Záloha</button>`:''}
               </div>
             </div>`:''}
+          ${canSeeLektorPanel()? `<button class="btn lektor-btn" type="button" onclick="viewLektor()">Lektor</button>` : ''}
           <button class="btn" type="button" onclick="logout()">Odhlásit</button>
         </div>`;
       const sel=document.getElementById('selActiveRole'); if(sel) sel.onchange=()=>{ ACTIVE_ROLE=sel.value; renderApp(); };
@@ -1618,7 +1620,7 @@
 
       return `
         <details class="admin-box" style="margin-top:12px">
-          <summary><b>Správa checklistu</b> <span class="muted small">jen Admin</span></summary>
+          <summary><b>Správa checklistu</b> <span class="muted small">jen Admin / Podpora</span></summary>
           <div style="margin-top:10px">
             <div class="grid2">
               <input id="newSkillTitle" class="input" placeholder="Nový bod, např. KPR + AED">
@@ -1665,7 +1667,7 @@
           <div class="row" style="justify-content:space-between;align-items:flex-start">
             <div>
               <div><b>Progres člena</b></div>
-              <div class="muted small">Sekci vidí jen Lektor a Admin. </div>
+              <div class="muted small">Sekci vidí jen Lektor, Admin a Podpora. Role Lektor je interní, nepočítá se do dozorových požadavků.</div>
             </div>
             <div style="min-width:260px;flex:1;max-width:420px">
               <select id="lektorUserSel" class="select">${usersOpts}</select>
