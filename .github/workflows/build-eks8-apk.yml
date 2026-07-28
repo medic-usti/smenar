@@ -8,6 +8,12 @@ on:
     paths:
       - 'android-recorder/**'
       - '.github/workflows/build-eks8-apk.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'android-recorder/**'
+      - '.github/workflows/build-eks8-apk.yml'
 
 jobs:
   build:
