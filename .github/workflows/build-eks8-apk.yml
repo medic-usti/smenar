@@ -1,0 +1,59 @@
+name: Build EKS8 Recorder APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/eks8-recorder-apk
+    paths:
+      - 'android-recorder/**'
+      - '.github/workflows/build-eks8-apk.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'android-recorder/**'
+      - '.github/workflows/build-eks8-apk.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
+      - name: Restore Android project
+        shell: bash
+        run: |
+          mkdir -p android-recorder/work
+          base64 --decode android-recorder/chunks/part00.b64 > android-recorder/work/EKS8Recorder-project.tar.xz
+          tar -xJf android-recorder/work/EKS8Recorder-project.tar.xz -C android-recorder/work
+
+      - name: Build debug APK
+        working-directory: android-recorder/work/EKS8Recorder
+        run: gradle --no-daemon assembleDebug
+
+      - name: Rename APK
+        shell: bash
+        run: cp android-recorder/work/EKS8Recorder/app/build/outputs/apk/debug/app-debug.apk EKS8-Recorder.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: EKS8-Recorder-APK
+          path: EKS8-Recorder.apk
+          if-no-files-found: error
+          retention-days: 7
