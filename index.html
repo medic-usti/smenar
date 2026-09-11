@@ -176,6 +176,8 @@
     let CURRENT_VIEW='events', CURRENT_EDIT_ID=null;
     let SELECTED_USER_ID=null, SELECTED_LEKTOR_USER_ID=null;
     let DUPLICATE_PREFILL=null;
+    let PENDING_SHARED_EVENT_ID = new URL(window.location.href).searchParams.get('event') || null;
+    let DB_READY=false;
     let DB_ONLINE=false, DB_LAST_TS=0, DB_LAST_SRC='—';
 
     const $=s=>document.querySelector(s);
@@ -343,6 +345,7 @@
         ]);
         DB_ONLINE=true; DB_LAST_TS=Date.now(); DB_LAST_SRC='init';
         await seedIfEmpty(); await ensureCoreRoles();
+        DB_READY=true;
         subscribeRealtime();
         renderApp();
         checkForcedLogout();
@@ -554,6 +557,68 @@
       });
       return 'https://calendar.google.com/calendar/render?' + params.toString();
     }
+    function createEventShareLink(aid){
+      const url = new URL(window.location.href);
+      url.searchParams.set('event', aid);
+      url.hash = '';
+      return url.toString();
+    }
+
+    async function copyTextFallback(text){
+      try{
+        if(navigator.clipboard && window.isSecureContext){
+          await navigator.clipboard.writeText(text);
+          return true;
+        }
+      }catch(e){ console.warn('Clipboard API selhalo', e); }
+
+      try{
+        const ta=document.createElement('textarea');
+        ta.value=text;
+        ta.setAttribute('readonly','');
+        ta.style.position='fixed';
+        ta.style.opacity='0';
+        document.body.appendChild(ta);
+        ta.select();
+        const ok=document.execCommand('copy');
+        ta.remove();
+        return !!ok;
+      }catch(e){
+        console.warn('Fallback kopírování selhalo', e);
+        return false;
+      }
+    }
+
+    async function shareEvent(aid){
+      const a = ACTIONS.find(x=>x.id===aid) || ARCHIVE.find(x=>x.id===aid);
+      if(!a) return;
+
+      const url = createEventShareLink(aid);
+      const when = [fmtDMy(a.date), a.timeFrom ? (a.timeFrom + (a.timeTo ? '–' + a.timeTo : '')) : ''].filter(Boolean).join(' ');
+      const text = `${a.title || 'Událost'}${when ? ' • ' + when : ''}${a.location ? ' • ' + a.location : ''}`;
+
+      if(navigator.share){
+        try{
+          await navigator.share({
+            title: `Směnář – ${a.title || 'Událost'}`,
+            text,
+            url
+          });
+          return;
+        }catch(e){
+          if(e && e.name==='AbortError') return;
+          console.warn('Systémové sdílení selhalo', e);
+        }
+      }
+
+      if(await copyTextFallback(url)){
+        toast('Odkaz zkopírován', 'Můžeš ho vložit do Messengeru.');
+      }else{
+        prompt('Zkopíruj odkaz na událost:', url);
+      }
+    }
+    window.shareEvent = shareEvent;
+
     function downloadICS(aid){
       const a = ACTIONS.find(x=>x.id===aid) || ARCHIVE.find(x=>x.id===aid);
       if(!a) return;
@@ -1100,6 +1165,7 @@
         </a>`;
       const headerActions = `
         <div class="row" style="gap:8px;justify-content:flex-end">
+          <button class="btn" type="button" onclick="shareEvent('${a.id}')" title="Sdílet odkaz na tuto událost">↗ Sdílet</button>
           ${gcalBtn}
           <button class="btn" type="button" onclick="downloadICS('${a.id}')">Stáhnout ICS</button>
         </div>`;
@@ -1994,14 +2060,43 @@
     window.viewPassword=viewPassword;
     window.saveMyPassword=saveMyPassword;
 
+    function clearSharedEventFromUrl(){
+      try{
+        const url = new URL(window.location.href);
+        url.searchParams.delete('event');
+        history.replaceState(null, '', url.pathname + url.search + url.hash);
+      }catch(e){ console.warn('Nepodařilo se vyčistit URL události', e); }
+    }
+
+    function maybeOpenSharedEvent(){
+      if(!ME || !DB_READY || !PENDING_SHARED_EVENT_ID) return;
+
+      const aid = PENDING_SHARED_EVENT_ID;
+      const a = ACTIONS.find(x=>x.id===aid) || ARCHIVE.find(x=>x.id===aid);
+      PENDING_SHARED_EVENT_ID = null;
+      clearSharedEventFromUrl();
+
+      if(!a){
+        toast('Událost nenalezena', 'Odkaz může být neplatný nebo byla událost smazána.');
+        return;
+      }
+
+      setTimeout(()=>openEventModal(a.id), 0);
+    }
+
     /* ===== Router ===== */
     function renderApp(){
       try{
-        renderHeader();
-        if(!ME){
+        if(!ME && DB_READY){
           const sid=localStorage.getItem(DB_SESSION);
-          if(sid){ const u=getUserById(sid); if(u && u.isActive!==false){ ME=u; SELECTED_USER_ID=ME.id; ensureActiveRole(); } else localStorage.removeItem(DB_SESSION); }
+          if(sid){
+            const u=getUserById(sid);
+            if(u && u.isActive!==false){ ME=u; SELECTED_USER_ID=ME.id; ensureActiveRole(); }
+            else localStorage.removeItem(DB_SESSION);
+          }
         }
+
+        renderHeader();
         if(!ME){ viewLogin(); return; }
         if((CURRENT_VIEW==='export' || CURRENT_VIEW==='logins') && !isSupportUser(ME)) CURRENT_VIEW='events';
         if(CURRENT_VIEW==='lektor' && !canSeeLektorPanel()) CURRENT_VIEW='events';
@@ -2019,7 +2114,8 @@
           case 'lektor': viewLektor(); break;
           default: viewEvents();
         }
-        
+
+        maybeOpenSharedEvent();
         if(ME) resetAutoLogoutTimer();
       }catch(e){
         showErr('Render error: '+(e.message||e));
