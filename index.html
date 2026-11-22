@@ -1180,6 +1180,10 @@
         if(k==='zza') def=0;
         if(k==='ridic') def=0;
         if(k=='zachranar') def=0;
+        // Externisté mají u nově vytvářených událostí výchozí samostatnou kapacitu 0.
+        // Existující hodnoty při úpravě a duplikaci událostí zachováváme.
+        const roleIdentity = `${k} ${roleLabel(k)}`.toLocaleLowerCase('cs');
+        if(/externist|externi|externí/.test(roleIdentity) || (zzEnabled && k===zz?.backupRole)) def=0;
         const v = pf ? (pf.capacity?.[k] ?? def) : (a?.capacity?.[k] ?? def);
         return `<div class="role-cap-wrap" data-zz-cap-role="${h(k)}"><label>${h(roleLabel(k))} kapacita<input class="input" id="cap_${h(k)}" type="number" min="0" value="${v}"></label><div class="cap-shared-note">Řídí se společnou kapacitou ZZ výše.</div></div>`;
       }).join('');
