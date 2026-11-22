@@ -129,6 +129,12 @@
     .priority-panel{border:1px solid #cbd5e1;border-radius:10px;background:#f8fafc;padding:12px;margin-top:12px}
     .priority-details{border:1px solid var(--border);border-radius:9px;padding:10px;margin-top:8px;background:#fff}
     .priority-role-row{margin:5px 0 0 10px;padding-left:8px;border-left:2px solid #e2e8f0}
+    /* Samostatné kapacity vybraných ZZ rolí zůstávají uložené, ale při společné kapacitě je nelze upravovat. */
+    .role-cap-wrap{transition:opacity .15s ease}
+    .role-cap-wrap.cap-shared-disabled{opacity:.45}
+    .role-cap-wrap.cap-shared-disabled input{background:#f1f5f9;cursor:not-allowed}
+    .cap-shared-note{display:none;font-size:12px;margin-top:5px}
+    .cap-shared-disabled .cap-shared-note{display:block}
     .request-row{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;border-bottom:1px solid var(--border);padding:9px 0}
     .request-row:last-child{border-bottom:0}
     .progress-wrap{width:100%;height:14px;border:1px solid var(--border);border-radius:999px;background:#eef2f7;overflow:hidden}
@@ -435,6 +441,11 @@
       if(!role || !role.isPublic || ['admin','support','lektor','ridic'].includes(k)) return false;
       const txt=`${k} ${role.label||''}`.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
       return /zachran|zdravotn|\bzz\b|\bzza\b|(^|[_-])zz([_-]|$)|(^|[_-])zza([_-]|$)/.test(txt);
+    }
+    // Samostatnou historickou roli ZZA nenabízet pro společné obsazení ZZ.
+    // Zůstává použitelná jako běžná role se samostatnou kapacitou.
+    function isSelectableZZRoleKey(k){
+      return isRescuerRoleKey(k) && k!=='zza' && roleLabel(k).trim().toUpperCase()!=='ZZA';
     }
     function eventZZPriority(a){
       const p=a?.zzPriority;
@@ -1146,7 +1157,7 @@
       const isUnconfirmed = pf ? !!pf.isUnconfirmed : !!a?.isUnconfirmed;
       const zz = pf ? pf.zzPriority : a?.zzPriority;
       const zzEnabled=!!zz?.enabled;
-      const rescueRoles=getPublicRoleKeys().filter(isRescuerRoleKey);
+      const rescueRoles=getPublicRoleKeys().filter(isSelectableZZRoleKey);
       const zzSelectOpts=(selected)=>`<option value="">— Vyber roli —</option>` + rescueRoles.map(k=>
         `<option value="${h(k)}" ${selected===k?'selected':''}>${h(roleLabel(k))}</option>`).join('');
       const courseCap = pf ? (Number.isFinite(pf.courseCap) ? pf.courseCap : 0) : (Number.isFinite(a?.courseCap) ? a.courseCap : 0);
@@ -1159,7 +1170,7 @@
         if(k==='ridic') def=0;
         if(k=='zachranar') def=0;
         const v = pf ? (pf.capacity?.[k] ?? def) : (a?.capacity?.[k] ?? def);
-        return `<div><label>${roleLabel(k)} kapacita<input class="input" id="cap_${k}" type="number" min="0" value="${v}"></label></div>`;
+        return `<div class="role-cap-wrap" data-zz-cap-role="${h(k)}"><label>${h(roleLabel(k))} kapacita<input class="input" id="cap_${h(k)}" type="number" min="0" value="${v}"></label><div class="cap-shared-note">Řídí se společnou kapacitou ZZ výše.</div></div>`;
       }).join('');
 
       const visibleActiveUsers = (USERS||[])
@@ -1229,11 +1240,11 @@
             <div class="muted small" style="margin-top:4px">Pouze pro ZZ: interní členové se přihlašují přímo, externisté žádají o účast a čekají na schválení Adminem nebo Podporou. Řidičů se toto nastavení netýká.</div>
             <div id="ev_zz_block" style="${zzEnabled?'':'display:none'};margin-top:9px">
               <div class="grid3">
-                <label>Interní role ZZ (přímé přihlášení)<select class="select" id="ev_zz_primary">${zzSelectOpts(zz?.primaryRole||'')}</select></label>
-                <label>Externí role ZZ (na schválení)<select class="select" id="ev_zz_backup">${zzSelectOpts(zz?.backupRole||'')}</select></label>
+                <label>Interní role ZZ (přímé přihlášení)<select class="select" id="ev_zz_primary" onchange="toggleZZPriorityEditor()">${zzSelectOpts(zz?.primaryRole||'')}</select></label>
+                <label>Externí role ZZ (na schválení)<select class="select" id="ev_zz_backup" onchange="toggleZZPriorityEditor()">${zzSelectOpts(zz?.backupRole||'')}</select></label>
                 <label>Společná kapacita ZZ<input class="input" id="ev_zz_capacity" type="number" min="1" value="${zz?.capacity||1}"></label>
               </div>
-              <div class="muted small" style="margin-top:6px">Kapacita je SPOLEČNÁ pro obě ZZ role. Jejich samostatné kapacity níže se pro tuto společnou pozici nepoužijí. Nastav stejné seskupení rolí ve správě rolí (např. ZZ).</div>
+              <div class="muted small" style="margin-top:6px">Kapacita je SPOLEČNÁ pro obě ZZ role. Samostatné kapacity vybraných rolí se níže automaticky zneaktivní. Role ZZA do společné kapacity nepatří. Nastav stejné seskupení rolí ve správě rolí (např. ZZ).</div>
             </div>
           </div>
           <div class="grid3" style="margin-top:8px">${caps}</div>
@@ -1260,11 +1271,23 @@
             <button class="btn primary" type="button" onclick="saveEvent('${editId||''}')">${editId?'Uložit změny':'Vytvořit'}</button>
           </div>
         </div>`;
+      toggleZZPriorityEditor();
     }
 
     function toggleZZPriorityEditor(){
       const enabled=!!document.getElementById('ev_zz_enabled')?.checked;
-      const block=document.getElementById('ev_zz_block');if(block) block.style.display=enabled?'':'none';
+      const block=document.getElementById('ev_zz_block');
+      if(block) block.style.display=enabled?'':'none';
+      const selected=new Set(enabled ? [
+        document.getElementById('ev_zz_primary')?.value,
+        document.getElementById('ev_zz_backup')?.value
+      ].filter(Boolean) : []);
+      for(const wrapper of document.querySelectorAll('[data-zz-cap-role]')){
+        const isShared=selected.has(wrapper.dataset.zzCapRole);
+        wrapper.classList.toggle('cap-shared-disabled',isShared);
+        const input=wrapper.querySelector('input');
+        if(input) input.disabled=isShared;
+      }
     }
     async function saveEvent(editId){
       if(!isPrivileged()){ alert('Jen admin/podpora'); return; }
@@ -1281,7 +1304,7 @@
       const zzCapacity=Number(document.getElementById('ev_zz_capacity')?.value||0);
       if(zzOn){
         if(!zzPrimary||!zzBackup||zzPrimary===zzBackup) return alert('Vyber dvě různé ZZ role: interní a externí.');
-        if(!isRescuerRoleKey(zzPrimary)||!isRescuerRoleKey(zzBackup)) return alert('Společné obsazení lze nastavit jen pro záchranářské role.');
+        if(!isSelectableZZRoleKey(zzPrimary)||!isSelectableZZRoleKey(zzBackup)) return alert('Společné obsazení lze nastavit jen pro ZZ role kromě ZZA.');
         if(!Number.isInteger(zzCapacity)||zzCapacity<1) return alert('Společná kapacita ZZ musí být alespoň 1.');
       }
       const newZZ=zzOn ? {enabled:true,primaryRole:zzPrimary,backupRole:zzBackup,capacity:zzCapacity} : null;
