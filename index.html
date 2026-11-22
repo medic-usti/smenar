@@ -125,6 +125,7 @@
     .occ-role{font-size:12px; border:1px solid var(--border); border-radius:999px; padding:2px 8px; background:#fff}
     .occ-ok{color:#6b7280}
     .occ-missing{color:#b91c1c; border-color:#fecaca; background:#fef2f2; font-weight:600}
+    .occ-over{color:#9a3412;border-color:#fdba74;background:#fff7ed;font-weight:600}
     .occ-requests{background:#fffbeb;border-color:#fcd34d;color:#92400e}
     .priority-panel{border:1px solid #cbd5e1;border-radius:10px;background:#f8fafc;padding:12px;margin-top:12px}
     .priority-details{border:1px solid var(--border);border-radius:9px;padding:10px;margin-top:8px;background:#fff}
@@ -224,7 +225,16 @@
       const dmy = fmtDMy(a?.date);
       const name = user?.name || uid;
 
-      const ok = confirm(`Opravdu přiřadit „${name}“ do role „${role}“ k události „${title}“ (${dmy})?`);
+      // Správce může ručně navýšit počet přihlášených i nad limit společné kapacity ZZ.
+      // Potvrzení mu při tom ukáže skutečnou výslednou obsazenost.
+      const p=eventZZPriority(a);
+      const selectedRole=priorityRoleType(a,roleKey);
+      const alreadyInGroup=p && [p.primaryRole,p.backupRole]
+        .some(k=>(a.signups?.[k]||[]).includes(uid));
+      const nextCount=p && selectedRole ? zzConfirmedCount(a)+(alreadyInGroup?0:1) : 0;
+      const overCapacity=!!p && !!selectedRole && nextCount>p.capacity;
+      const overInfo=overCapacity ? `\n\nPozor: společná obsazenost ZZ po přidání bude ${nextCount}/${p.capacity} (nad kapacitou).` : '';
+      const ok = confirm(`Opravdu přiřadit „${name}“ do role „${role}“ k události „${title}“ (${dmy})?${overInfo}`);
       if(ok) assignMember(aid, roleKey, uid);
     }
 
@@ -504,7 +514,8 @@
           return `<div class="priority-role-row"><b>${h(roleLabel(k))}</b>${roleType}: ${stat}${names?` — <span class="muted">${names}</span>`:''}</div>`;
         }).join('');
         const requestInfo=g.priority?`<div class="muted small" style="margin-top:5px">Externisté čekající na schválení: <b>${g.pending}</b> (nepočítají se do obsazenosti)</div>`:'';
-        return `<div class="priority-details"><div ${missing?'style="color:#b91c1c"':''}><b>${h(g.name)}: ${g.confirmed}/${g.capacity}</b>${missing?' • neobsazeno':''}${g.priority?' • společná kapacita ZZ':''}</div>${roleLines}${requestInfo}</div>`;
+        const above=g.priority && g.confirmed>g.capacity;
+        return `<div class="priority-details"><div ${missing?'style="color:#b91c1c"':above?'style="color:#9a3412"':''}><b>${h(g.name)}: ${g.confirmed}/${g.capacity}</b>${missing?' • neobsazeno':''}${above?' • nad kapacitou':''}${g.priority?' • společná kapacita ZZ':''}</div>${roleLines}${requestInfo}</div>`;
       }).join('');
     }
     function requestStatusForUser(a,userId){ return zzRequests(a).some(x=>x.userId===userId); }
@@ -588,7 +599,7 @@
       }
 
       const parts=occupancyGroups(a).map(g=>{
-        const cls=g.capacity>g.confirmed?'occ-role occ-missing':'occ-role occ-ok';
+        const cls=g.capacity>g.confirmed?'occ-role occ-missing':g.priority && g.confirmed>g.capacity?'occ-role occ-over':'occ-role occ-ok';
         const pending=g.priority && g.pending ? ` <span class="occ-requests">(+${g.pending} žád.)</span>` : '';
         return `<span class="${cls}" title="${g.keys.map(k=>roleLabel(k)).join(' + ')}">${h(g.name)} ${g.confirmed}/${g.capacity}${pending}</span>`;
       });
@@ -933,9 +944,8 @@
       if(!isPrivileged()) return;
       let a=ACTIONS.find(x=>x.id===aid) || ARCHIVE.find(x=>x.id===aid); if(!a) return;
       const mode=priorityRoleType(a,roleKey);
-      if(mode && zzConfirmedCount(a)>=eventZZPriority(a).capacity){
-        alert('Společná kapacita ZZ je již obsazená. Nejdříve uvolni místo.'); return;
-      }
+      // Ruční přiřazení Adminem / Podporou není omezené společnou kapacitou.
+      // Běžné přihlašování uživatelů nadále používá inRoleCapacity().
       if(mode && ((a.signups?.[eventZZPriority(a).primaryRole]||[]).includes(uid) || (a.signups?.[eventZZPriority(a).backupRole]||[]).includes(uid))){
         alert('Tento člen už je na společné pozici ZZ potvrzený.'); return;
       }
@@ -1316,7 +1326,10 @@
       }
       if(newZZ&&currentEvent){
         const total=new Set([...(currentEvent.signups?.[zzPrimary]||[]),...(currentEvent.signups?.[zzBackup]||[])]).size;
-        if(total>zzCapacity) return alert(`Společná kapacita ${zzCapacity} je nižší než ${total} již přihlášených ZZ.`);
+        // Nepřekážet při úpravě již ručně přeobsazené akce (např. 2/1).
+        // U změny rolí či společného limitu upozornit na výsledné přeobsazení.
+        const changedGroup=!oldZZ||oldZZ.primaryRole!==zzPrimary||oldZZ.backupRole!==zzBackup||oldZZ.capacity!==zzCapacity;
+        if(changedGroup&&total>zzCapacity && !confirm(`Pro společnou pozici ZZ je přihlášeno ${total} členů při nastavené kapacitě ${zzCapacity}. Uložit událost s obsazeností ${total}/${zzCapacity}?`)) return;
       }
       const un=$('#ev_unlock')?.value?.trim()||'';
       const tech=$('#ev_tech')?.value?.trim()||'';
@@ -1426,6 +1439,7 @@
       return `
         <div class="admin-box small" style="margin-top:10px">
           <b>Ruční přiřazení</b>
+          ${eventZZPriority(a)?'<div class="muted small" style="margin-top:4px">Admin / Podpora může přidat interního i externího ZZ nad společnou kapacitu (např. 2/1). Běžné přihlašování členů limit stále dodržuje.</div>':''}
           <div class="grid3" style="margin-top:8px">${perRole}</div>
         </div>
       `;
