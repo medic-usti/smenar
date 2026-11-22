@@ -125,6 +125,12 @@
     .occ-role{font-size:12px; border:1px solid var(--border); border-radius:999px; padding:2px 8px; background:#fff}
     .occ-ok{color:#6b7280}
     .occ-missing{color:#b91c1c; border-color:#fecaca; background:#fef2f2; font-weight:600}
+    .occ-requests{background:#fffbeb;border-color:#fcd34d;color:#92400e}
+    .priority-panel{border:1px solid #cbd5e1;border-radius:10px;background:#f8fafc;padding:12px;margin-top:12px}
+    .priority-details{border:1px solid var(--border);border-radius:9px;padding:10px;margin-top:8px;background:#fff}
+    .priority-role-row{margin:5px 0 0 10px;padding-left:8px;border-left:2px solid #e2e8f0}
+    .request-row{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;border-bottom:1px solid var(--border);padding:9px 0}
+    .request-row:last-child{border-bottom:0}
     .progress-wrap{width:100%;height:14px;border:1px solid var(--border);border-radius:999px;background:#eef2f7;overflow:hidden}
     .progress-bar{height:100%;background:#0f172a;border-radius:999px;transition:width .18s ease}
     .skill-row{display:grid;grid-template-columns:auto 1fr minmax(180px,260px);gap:10px;align-items:start;padding:10px 0;border-bottom:1px solid var(--border)}
@@ -419,6 +425,82 @@
         <div class="muted small" style="margin-top:6px">Role uvidí jen akce z vybraných oblastí. Admin a Podpora mají přístup k oběma bez ohledu na nastavení.</div>
       </div>`;
     }
+    /* ===== Seskupení rolí v přehledu a prioritní obsazení pouze ZZ ===== */
+    function roleSummaryName(k){
+      const role=ROLES.find(r=>r.key===k);
+      return (role?.displayGroup||'').trim() || roleLabel(k);
+    }
+    function isRescuerRoleKey(k){
+      const role=ROLES.find(r=>r.key===k);
+      if(!role || !role.isPublic || ['admin','support','lektor','ridic'].includes(k)) return false;
+      const txt=`${k} ${role.label||''}`.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+      return /zachran|zdravotn|\bzz\b|\bzza\b|(^|[_-])zz([_-]|$)|(^|[_-])zza([_-]|$)/.test(txt);
+    }
+    function eventZZPriority(a){
+      const p=a?.zzPriority;
+      if(!p?.enabled || !p.primaryRole || !p.backupRole || p.primaryRole===p.backupRole) return null;
+      if(!ROLES.some(r=>r.key===p.primaryRole && r.isPublic) || !ROLES.some(r=>r.key===p.backupRole && r.isPublic)) return null;
+      return {primaryRole:p.primaryRole, backupRole:p.backupRole, capacity:Math.max(0,parseInt(p.capacity,10)||0)};
+    }
+    function priorityRoleType(a,roleKey){
+      const p=eventZZPriority(a);
+      return !p ? '' : roleKey===p.primaryRole ? 'primary' : roleKey===p.backupRole ? 'backup' : '';
+    }
+    function zzConfirmedCount(a){
+      const p=eventZZPriority(a);
+      if(!p) return 0;
+      return new Set([...(a.signups?.[p.primaryRole]||[]),...(a.signups?.[p.backupRole]||[])]).size;
+    }
+    function zzRequests(a){
+      const p=eventZZPriority(a);
+      return p ? (a.zzRequests||[]).filter(x=>x && x.roleKey===p.backupRole && x.userId) : [];
+    }
+    function zzRequestFor(a,userId){ return zzRequests(a).find(x=>x.userId===userId)||null; }
+    function zzGroupName(a){
+      const p=eventZZPriority(a);
+      return p ? (ROLES.find(r=>r.key===p.primaryRole)?.displayGroup||'').trim() ||
+        (ROLES.find(r=>r.key===p.backupRole)?.displayGroup||'').trim() || 'ZZ' : 'ZZ';
+    }
+    function occupancyGroups(a){
+      const pubs=getPublicRoleKeys();
+      const p=eventZZPriority(a);
+      const out=[];
+      const groups=new Map();
+      if(p){
+        out.push({name:zzGroupName(a),keys:[p.primaryRole,p.backupRole],
+          confirmed:zzConfirmedCount(a),capacity:p.capacity,priority:true,pending:zzRequests(a).length});
+      }
+      for(const k of pubs){
+        if(p && (k===p.primaryRole || k===p.backupRole)) continue;
+        const r=ROLES.find(x=>x.key===k);
+        const title=(r?.displayGroup||'').trim();
+        const groupKey=title ? 'group:'+title.toLocaleLowerCase('cs') : 'role:'+k;
+        if(!groups.has(groupKey)) groups.set(groupKey,{name:title||roleLabel(k),keys:[],confirmed:0,capacity:0,priority:false,pending:0});
+        const g=groups.get(groupKey);
+        g.keys.push(k);g.confirmed+=(a.signups?.[k]||[]).length;
+        g.capacity+=Math.max(0,Number(a.capacity?.[k])||0);
+      }
+      return [...out,...groups.values()];
+    }
+    function occupancyDetailsHTML(a){
+      return occupancyGroups(a).map(g=>{
+        const missing=g.confirmed<g.capacity;
+        const roleLines=g.keys.map(k=>{
+          const ids=a.signups?.[k]||[];
+          const names=ids.map(id=>h(getUserById(id)?.name||id)).join(', ');
+          const stat=g.priority ? `${ids.length} potvrzeno` : `${ids.length}/${a.capacity?.[k]||0}`;
+          const roleType=g.priority ? (k===eventZZPriority(a)?.primaryRole ? ' <span class="muted small">(interní)</span>' : ' <span class="muted small">(externí)</span>') : '';
+          return `<div class="priority-role-row"><b>${h(roleLabel(k))}</b>${roleType}: ${stat}${names?` — <span class="muted">${names}</span>`:''}</div>`;
+        }).join('');
+        const requestInfo=g.priority?`<div class="muted small" style="margin-top:5px">Externisté čekající na schválení: <b>${g.pending}</b> (nepočítají se do obsazenosti)</div>`:'';
+        return `<div class="priority-details"><div ${missing?'style="color:#b91c1c"':''}><b>${h(g.name)}: ${g.confirmed}/${g.capacity}</b>${missing?' • neobsazeno':''}${g.priority?' • společná kapacita ZZ':''}</div>${roleLines}${requestInfo}</div>`;
+      }).join('');
+    }
+    function requestStatusForUser(a,userId){ return zzRequests(a).some(x=>x.userId===userId); }
+    async function saveActionData(a){
+      if(ACTIONS.some(x=>x.id===a.id)) await kvSave(DB_ACTIONS,ACTIONS);
+      else if(ARCHIVE.some(x=>x.id===a.id)) await kvSave(DB_ARCHIVE,ARCHIVE);
+    }
     function getUserById(id){ return (USERS||[]).find(u=>u.id===id)||null; }
     function userPublicRoles(u){ const pubs=getPublicRoleKeys(); return (u?.roles||[]).filter(r=>pubs.includes(r)); }
     function ensureActiveRole(){ if(!ME){ACTIVE_ROLE=null;return;} const prs=userPublicRoles(ME); if(!prs.length){ACTIVE_ROLE=null;return;} if(!ACTIVE_ROLE||!prs.includes(ACTIVE_ROLE)) ACTIVE_ROLE=prs[0]; }
@@ -494,14 +576,11 @@
         return `<div class="occ-wrap"><span class="occ-role ${cap>cur?'occ-missing':'occ-ok'}">Kurz ${cur}/${cap}</span></div>`;
       }
 
-      const pubs=getPublicRoleKeys();
-      const parts = pubs.map(r=>{
-        const cur=(a.signups?.[r]||[]).length;
-        const cap=(a.capacity?.[r]||0);
-        const missing = cap>cur;
-        const cls = missing ? 'occ-role occ-missing' : 'occ-role occ-ok';
-        return `<span class="${cls}">${roleLabel(r)} ${cur}/${cap}</span>`;
-      }).filter(Boolean);
+      const parts=occupancyGroups(a).map(g=>{
+        const cls=g.capacity>g.confirmed?'occ-role occ-missing':'occ-role occ-ok';
+        const pending=g.priority && g.pending ? ` <span class="occ-requests">(+${g.pending} žád.)</span>` : '';
+        return `<span class="${cls}" title="${g.keys.map(k=>roleLabel(k)).join(' + ')}">${h(g.name)} ${g.confirmed}/${g.capacity}${pending}</span>`;
+      });
       return `<div class="occ-wrap">${parts.join('')}</div>`;
     }
 
@@ -549,17 +628,25 @@
 
       const roleLines = [];
       roleLines.push(makeRoleLine('Řidič', 'ridic'));
+      const zzPriority=eventZZPriority(a);
+      if(zzPriority){
+        const roles=[zzPriority.primaryRole,zzPriority.backupRole];
+        const people=roles.flatMap(k=>(a.signups?.[k]||[]).map(id=>getUserById(id)?.name||id));
+        roleLines.push(`${zzGroupName(a)} ${zzConfirmedCount(a)}/${zzPriority.capacity}${people.length?' — '+[...new Set(people)].join(', '):''}`);
+        roleLines.push(`${roleLabel(zzPriority.primaryRole)}: ${(a.signups?.[zzPriority.primaryRole]||[]).length}; ${roleLabel(zzPriority.backupRole)}: ${(a.signups?.[zzPriority.backupRole]||[]).length} (žádosti externistů: ${zzRequests(a).length})`);
+      }
 
       const capObj = (a && a.capacity) || {};
       const signObj = (a && a.signups) || {};
       const hasZza = Object.prototype.hasOwnProperty.call(capObj, 'zza') || Object.prototype.hasOwnProperty.call(signObj, 'zza');
       const hasZdravotnik = Object.prototype.hasOwnProperty.call(capObj, 'zdravotnik') || Object.prototype.hasOwnProperty.call(signObj, 'zdravotnik');
-      if (hasZza || hasZdravotnik) {
-        roleLines.push(makeRoleLine('Zdravotník / ZZA', ['zdravotnik', 'zza']));
+      const remainingMedical=['zdravotnik','zza'].filter(k=>!zzPriority || (k!==zzPriority.primaryRole&&k!==zzPriority.backupRole));
+      if ((hasZza || hasZdravotnik) && remainingMedical.length) {
+        roleLines.push(makeRoleLine('Zdravotník / ZZA', remainingMedical));
       }
 
       const otherPublicRoles = getPublicRoleKeys().filter(function(k){
-        return ['ridic', 'zza', 'zdravotnik'].indexOf(k) === -1;
+        return ['ridic', 'zza', 'zdravotnik'].indexOf(k) === -1 && (!zzPriority || (k!==zzPriority.primaryRole&&k!==zzPriority.backupRole));
       });
       for (const key of otherPublicRoles) {
         roleLines.push(makeRoleLine(roleLabel(key), key));
@@ -821,7 +908,9 @@
         isCourse: !!a.isCourse,
         isUnconfirmed: !!a.isUnconfirmed,
         courseCap: Number.isFinite(a.courseCap) ? a.courseCap : 0,
-        courseMembers: []
+        courseMembers: [],
+        zzPriority: a.zzPriority ? JSON.parse(JSON.stringify(a.zzPriority)) : null,
+        zzRequests: []
       };
       closeEventModal();
       viewCreateEvent(null);
@@ -832,10 +921,19 @@
     async function assignMember(aid, roleKey, uid){
       if(!isPrivileged()) return;
       let a=ACTIONS.find(x=>x.id===aid) || ARCHIVE.find(x=>x.id===aid); if(!a) return;
+      const mode=priorityRoleType(a,roleKey);
+      if(mode && zzConfirmedCount(a)>=eventZZPriority(a).capacity){
+        alert('Společná kapacita ZZ je již obsazená. Nejdříve uvolni místo.'); return;
+      }
+      if(mode && ((a.signups?.[eventZZPriority(a).primaryRole]||[]).includes(uid) || (a.signups?.[eventZZPriority(a).backupRole]||[]).includes(uid))){
+        alert('Tento člen už je na společné pozici ZZ potvrzený.'); return;
+      }
+      a.signups=a.signups||{};
       a.signups[roleKey]=a.signups[roleKey]||[];
       if(!a.signups[roleKey].includes(uid)){
         a.signups[roleKey].push(uid);
-        if(ACTIONS.some(x=>x.id===aid)) await kvSave(DB_ACTIONS,ACTIONS); else await kvSave(DB_ARCHIVE,ARCHIVE);
+        if(mode) a.zzRequests=(a.zzRequests||[]).filter(x=>x.userId!==uid);
+        await saveActionData(a);
         const u=getUserById(uid); toast('Přiřazen člen', `${u?.name||uid} → ${roleLabel(roleKey)}`);
         await logActivity('assign', a.id, a.title, `${u?.name||uid} (${roleLabel(roleKey)})`, a.date);
       }
@@ -878,19 +976,135 @@
     }
 
     /* ===== Join/Leave/Delete ===== */
-    function inRoleCapacity(a, roleKey){ const cap=(a.capacity?.[roleKey]||0); const list=a.signups?.[roleKey]||[]; return list.length<cap; }
+    function inRoleCapacity(a, roleKey){
+      const mode=priorityRoleType(a,roleKey);
+      if(mode) return zzConfirmedCount(a)<eventZZPriority(a).capacity;
+      const cap=(a.capacity?.[roleKey]||0); const list=a.signups?.[roleKey]||[];
+      return list.length<cap;
+    }
+    async function requestZZBackup(aid){
+      const a=ACTIONS.find(x=>x.id===aid);
+      if(!a||!ME||!canAccessEvent(a)||priorityRoleType(a,ACTIVE_ROLE)!=='backup') return;
+      if(getUnlockMs(a)>nowMs()) return alert('Přihlašování ještě není otevřené.');
+      const p=eventZZPriority(a);
+      if((a.signups?.[p.primaryRole]||[]).includes(ME.id)||(a.signups?.[p.backupRole]||[]).includes(ME.id)){
+        toast('Již jsi potvrzený na této pozici.');return;
+      }
+      if(zzRequestFor(a,ME.id)){toast('Žádost už byla odeslána.');return;}
+      a.zzRequests=a.zzRequests||[];
+      a.zzRequests.push({userId:ME.id,roleKey:ACTIVE_ROLE,requestedAt:Date.now()});
+      await saveActionData(a);
+      await logActivity('zz-request',a.id,a.title,`${ME.name} (${roleLabel(ACTIVE_ROLE)}) – čeká na schválení`,a.date);
+      toast('Žádost o účast odeslána',a.title);renderApp();
+    }
+    async function cancelZZBackup(aid){
+      const a=ACTIONS.find(x=>x.id===aid);
+      if(!a||!ME||!zzRequestFor(a,ME.id)) return;
+      a.zzRequests=(a.zzRequests||[]).filter(x=>x.userId!==ME.id);
+      await saveActionData(a);
+      await logActivity('zz-cancel',a.id,a.title,`${ME.name} – stažena žádost`,a.date);
+      toast('Žádost stažena',a.title);renderApp();
+    }
+    async function decideZZBackup(aid,uid,approve){
+      if(!isPrivileged()) return;
+      const a=ACTIONS.find(x=>x.id===aid)||ARCHIVE.find(x=>x.id===aid);
+      if(!a) return;
+      const req=zzRequests(a).find(x=>x.userId===uid);
+      if(!req) return alert('Žádost již neexistuje.');
+      const p=eventZZPriority(a);
+      const user=getUserById(uid);
+      let replaced=null;
+      if(approve){
+        if(!user||user.isActive===false||!userHasRole(user,p.backupRole)) return alert('Člen už nemá platnou roli nebo aktivní účet.');
+        const alreadyConfirmed=(a.signups?.[p.primaryRole]||[]).includes(uid)||(a.signups?.[p.backupRole]||[]).includes(uid);
+        if(alreadyConfirmed) return alert('Externista už je na této pozici přihlášený.');
+
+        if(zzConfirmedCount(a)>=p.capacity){
+          // U plné společné kapacity lze interního i externího ZZ vyměnit jedním schválením.
+          // Pro více obsazených míst musí správce výslovně vybrat nahrazovaného člena.
+          const occupants=[...new Set([...(a.signups?.[p.primaryRole]||[]),...(a.signups?.[p.backupRole]||[])])];
+          if(!occupants.length || p.capacity<1){
+            return alert('Není možné schválit externistu: společná kapacita ZZ je 0 nebo není koho nahradit.');
+          }
+          let selectedId=occupants[0];
+          if(occupants.length>1){
+            const choices=occupants.map((id,i)=>{
+              const role=(a.signups?.[p.primaryRole]||[]).includes(id)?p.primaryRole:p.backupRole;
+              return `${i+1}. ${getUserById(id)?.name||id} (${roleLabel(role)})`;
+            }).join('\n');
+            const answer=prompt(`Společná kapacita ZZ je obsazená. Koho chceš nahradit externistou ${user.name}?\n\n${choices}\n\nZadej číslo člena:`, '1');
+            if(answer===null) return;
+            if(!/^[1-9]\d*$/.test(answer.trim()) || Number(answer.trim())>occupants.length){
+              return alert('Neplatný výběr. Ke změně nedošlo.');
+            }
+            selectedId=occupants[Number(answer.trim())-1];
+          }
+          if(occupants.length-1>=p.capacity){
+            return alert('Kapacita je překročena o více míst. Nejprve uprav obsazení ručně.');
+          }
+          const oldRole=(a.signups?.[p.primaryRole]||[]).includes(selectedId)?p.primaryRole:p.backupRole;
+          replaced={id:selectedId,name:getUserById(selectedId)?.name||selectedId,roleKey:oldRole};
+          if(!confirm(`Odstranit z akce „${replaced.name}“ a schválit externistu „${user.name}“?`)) return;
+        }else if(!confirm(`Schválit externistu ${user.name} jako ${roleLabel(p.backupRole)} na akci ${a.title}?`)) return;
+      }else if(!confirm(`Zamítnout žádost člena ${user?.name||uid}?`)) return;
+
+      // Odebrání člena, potvrzení externisty a stažení žádosti uložíme JEDNÍM zápisem události.
+      // Změny připravíme na kopii, aby zamítnutý dialog neovlivnil skutečná data.
+      const previousSignups=a.signups;
+      const previousRequests=a.zzRequests;
+      if(approve){
+        a.signups={...(a.signups||{})};
+        if(replaced){
+          for(const role of [p.primaryRole,p.backupRole]){
+            a.signups[role]=(a.signups[role]||[]).filter(id=>id!==replaced.id);
+          }
+        }
+        a.signups[p.backupRole]=[...(a.signups[p.backupRole]||[]),uid];
+      }
+      a.zzRequests=(a.zzRequests||[]).filter(x=>x.userId!==uid);
+      try{
+        await saveActionData(a);
+      }catch(err){
+        a.signups=previousSignups;
+        a.zzRequests=previousRequests;
+        throw err;
+      }
+      const description=replaced
+        ? `${replaced.name} (${roleLabel(replaced.roleKey)}) odstraněn; externista ${user.name} (${roleLabel(p.backupRole)}) schválen`
+        : `${user?.name||uid} (${roleLabel(p.backupRole)})`;
+      await logActivity(replaced?'zz-replace':(approve?'zz-approve':'zz-reject'),a.id,a.title,description,a.date);
+      toast(replaced?'Člen nahrazen externistou':(approve?'Externista schválen':'Žádost zamítnuta'),
+        replaced?`${replaced.name} → ${user.name}`:(user?.name||uid));
+      renderApp();openEventModal(aid);
+    }
+    function pendingZZAdminHTML(a){
+      if(!isPrivileged()||!eventZZPriority(a)) return '';
+      const pending=zzRequests(a).slice().sort((x,y)=>(x.requestedAt||0)-(y.requestedAt||0));
+      const rows=pending.map(x=>{
+        const u=getUserById(x.userId);
+        return `<div class="request-row"><div><b>${h(u?.name||x.userId)}</b><div class="small muted">${h(roleLabel(x.roleKey))} • ${x.requestedAt?new Date(x.requestedAt).toLocaleString('cs-CZ'):'—'}</div></div><div class="row"><button class="btn primary" type="button" onclick="decideZZBackup('${a.id}','${x.userId}',true)">Schválit</button><button class="btn danger" type="button" onclick="decideZZBackup('${a.id}','${x.userId}',false)">Zamítnout</button></div></div>`;
+      }).join('')||'<div class="muted small">Žádné čekající žádosti.</div>';
+      return `<div class="admin-box" style="margin-top:12px"><b>Žádosti externistů – ZZ (${pending.length})</b><div class="muted small" style="margin-top:4px">Externí ZZ posílají žádost o účast. Admin nebo Podpora je schvaluje; pokud je společná kapacita plná, při schválení lze rovnou nahradit přihlášeného člena.</div>${rows}</div>`;
+    }
     async function joinEvent(aid){
       const a=ACTIONS.find(x=>x.id===aid); if(!a||!ME) return;
       if(!canAccessEvent(a)){ alert('Tato událost není dostupná pro právě vybranou roli.'); return; }
       const unlockMs=getUnlockMs(a); if(unlockMs!==0 && nowMs()<unlockMs){ alert('Přihlašování ještě není otevřené.'); return; }
       ensureActiveRole(); if(!ACTIVE_ROLE){ alert('Nemáte vybranou veřejnou roli'); return; }
+      const mode=priorityRoleType(a,ACTIVE_ROLE);
+      if(mode==='backup') return requestZZBackup(aid);
+      a.signups=a.signups||{};
       a.signups[ACTIVE_ROLE]=a.signups[ACTIVE_ROLE]||[];
       if(a.signups[ACTIVE_ROLE].includes(ME.id)){ toast('Už jste přihlášen.'); renderApp(); return; }
+      const p=eventZZPriority(a);
+      if(mode==='primary' && (a.signups?.[p.backupRole]||[]).includes(ME.id)) return alert('Na této pozici už jsi přihlášen.');
       if(!inRoleCapacity(a, ACTIVE_ROLE)){ toast('Kapacita této role je plná.'); return; }
       a.signups[ACTIVE_ROLE].push(ME.id);
+      if(mode) a.zzRequests=(a.zzRequests||[]).filter(x=>x.userId!==ME.id);
       await kvSave(DB_ACTIONS,ACTIONS);
       toast('Přihlášení úspěšné', a.title);
       await logActivity('join', a.id, a.title, `${ME.name} (${roleLabel(ACTIVE_ROLE)})`, a.date);
+      renderApp();
     }
     async function leaveEvent(aid){
       const a=ACTIONS.find(x=>x.id===aid); if(!a||!ME||!ACTIVE_ROLE) return;
@@ -898,6 +1112,7 @@
       await kvSave(DB_ACTIONS,ACTIONS);
       toast('Odhlášení úspěšné', a.title);
       await logActivity('leave', a.id, a.title, `${ME.name} (${roleLabel(ACTIVE_ROLE)})`, a.date);
+      renderApp();
     }
     async function deleteEvent(aid){
       if(!isPrivileged()) return;
@@ -929,6 +1144,11 @@
       const note = pf ? (pf.notePublic||'') : (a?.notePublic || '');
       const isCourse = pf ? !!pf.isCourse : !!a?.isCourse;
       const isUnconfirmed = pf ? !!pf.isUnconfirmed : !!a?.isUnconfirmed;
+      const zz = pf ? pf.zzPriority : a?.zzPriority;
+      const zzEnabled=!!zz?.enabled;
+      const rescueRoles=getPublicRoleKeys().filter(isRescuerRoleKey);
+      const zzSelectOpts=(selected)=>`<option value="">— Vyber roli —</option>` + rescueRoles.map(k=>
+        `<option value="${h(k)}" ${selected===k?'selected':''}>${h(roleLabel(k))}</option>`).join('');
       const courseCap = pf ? (Number.isFinite(pf.courseCap) ? pf.courseCap : 0) : (Number.isFinite(a?.courseCap) ? a.courseCap : 0);
       const courseMembers = pf ? (Array.isArray(pf.courseMembers) ? pf.courseMembers : []) : (Array.isArray(a?.courseMembers) ? a.courseMembers : []);
 
@@ -1004,6 +1224,18 @@
             </label>
           </div>
 
+          <div class="priority-panel">
+            <label class="row" style="gap:8px"><input id="ev_zz_enabled" type="checkbox" ${zzEnabled?'checked':''} onchange="toggleZZPriorityEditor()"><b>Obsazení ZZ – interní / externí</b></label>
+            <div class="muted small" style="margin-top:4px">Pouze pro ZZ: interní členové se přihlašují přímo, externisté žádají o účast a čekají na schválení Adminem nebo Podporou. Řidičů se toto nastavení netýká.</div>
+            <div id="ev_zz_block" style="${zzEnabled?'':'display:none'};margin-top:9px">
+              <div class="grid3">
+                <label>Interní role ZZ (přímé přihlášení)<select class="select" id="ev_zz_primary">${zzSelectOpts(zz?.primaryRole||'')}</select></label>
+                <label>Externí role ZZ (na schválení)<select class="select" id="ev_zz_backup">${zzSelectOpts(zz?.backupRole||'')}</select></label>
+                <label>Společná kapacita ZZ<input class="input" id="ev_zz_capacity" type="number" min="1" value="${zz?.capacity||1}"></label>
+              </div>
+              <div class="muted small" style="margin-top:6px">Kapacita je SPOLEČNÁ pro obě ZZ role. Jejich samostatné kapacity níže se pro tuto společnou pozici nepoužijí. Nastav stejné seskupení rolí ve správě rolí (např. ZZ).</div>
+            </div>
+          </div>
           <div class="grid3" style="margin-top:8px">${caps}</div>
 
           <div id="courseBlock" class="admin-box" style="margin-top:12px; ${isCourse?'':'display:none'}">
@@ -1030,6 +1262,10 @@
         </div>`;
     }
 
+    function toggleZZPriorityEditor(){
+      const enabled=!!document.getElementById('ev_zz_enabled')?.checked;
+      const block=document.getElementById('ev_zz_block');if(block) block.style.display=enabled?'':'none';
+    }
     async function saveEvent(editId){
       if(!isPrivileged()){ alert('Jen admin/podpora'); return; }
       const d=$('#ev_date')?.value?.trim()||'';
@@ -1039,6 +1275,26 @@
       const lo=$('#ev_loc')?.value?.trim()||'';
       const cities=EVENT_CITIES.filter(city=>document.getElementById('ev_city_'+city)?.checked);
       if(!cities.length){ alert('Vyber alespoň jednu oblast: Ústí nebo Praha.'); return; }
+      const zzOn=!!document.getElementById('ev_zz_enabled')?.checked;
+      const zzPrimary=document.getElementById('ev_zz_primary')?.value||'';
+      const zzBackup=document.getElementById('ev_zz_backup')?.value||'';
+      const zzCapacity=Number(document.getElementById('ev_zz_capacity')?.value||0);
+      if(zzOn){
+        if(!zzPrimary||!zzBackup||zzPrimary===zzBackup) return alert('Vyber dvě různé ZZ role: interní a externí.');
+        if(!isRescuerRoleKey(zzPrimary)||!isRescuerRoleKey(zzBackup)) return alert('Společné obsazení lze nastavit jen pro záchranářské role.');
+        if(!Number.isInteger(zzCapacity)||zzCapacity<1) return alert('Společná kapacita ZZ musí být alespoň 1.');
+      }
+      const newZZ=zzOn ? {enabled:true,primaryRole:zzPrimary,backupRole:zzBackup,capacity:zzCapacity} : null;
+      const oldZZ=editId ? eventZZPriority(ACTIONS.find(a=>a.id===editId)||ARCHIVE.find(a=>a.id===editId)) : null;
+      const currentEvent=editId ? (ACTIONS.find(a=>a.id===editId)||ARCHIVE.find(a=>a.id===editId)) : null;
+      if(currentEvent?.zzRequests?.length){
+        if(!newZZ||!oldZZ||newZZ.primaryRole!==oldZZ.primaryRole||newZZ.backupRole!==oldZZ.backupRole)
+          return alert('Nejdřív schval nebo zamítni čekající žádosti externistů, až potom změň nebo vypni společné obsazení ZZ.');
+      }
+      if(newZZ&&currentEvent){
+        const total=new Set([...(currentEvent.signups?.[zzPrimary]||[]),...(currentEvent.signups?.[zzBackup]||[])]).size;
+        if(total>zzCapacity) return alert(`Společná kapacita ${zzCapacity} je nižší než ${total} již přihlášených ZZ.`);
+      }
       const un=$('#ev_unlock')?.value?.trim()||'';
       const tech=$('#ev_tech')?.value?.trim()||'';
       const note=$('#ev_note')?.value?.trim()||'';
@@ -1062,6 +1318,8 @@
           ev.signupUnlock=unlock; ev.capacity=cap; ev.tech=tech; ev.notePublic=note;
           ev.isCourse = isCourse;
           ev.isUnconfirmed = isUnconfirmed;
+          ev.zzPriority = newZZ;
+          if(!newZZ) ev.zzRequests=[];
           ev.courseCap = isCourse ? courseCap : 0;
           ev.courseMembers = isCourse ? courseMembers : [];
         });
@@ -1077,6 +1335,8 @@
           isPaid:false, adminNote:'', tech:tech, notePublic:note,
           isCourse: isCourse,
           isUnconfirmed: isUnconfirmed,
+          zzPriority: newZZ,
+          zzRequests: [],
           courseCap: isCourse ? courseCap : 0,
           courseMembers: isCourse ? courseMembers : []
         };
@@ -1128,7 +1388,7 @@
           <div class="card" style="padding:10px">
             <div class="row" style="justify-content:space-between;align-items:flex-start">
               <div><b>${roleLabel(r)}</b></div>
-              <div class="small muted">${(a.signups?.[r]||[]).length}/${a.capacity?.[r]||0}</div>
+              <div class="small muted">${priorityRoleType(a,r) ? `${(a.signups?.[r]||[]).length} potvrzeno • ZZ společně ${zzConfirmedCount(a)}/${eventZZPriority(a).capacity}` : `${(a.signups?.[r]||[]).length}/${a.capacity?.[r]||0}`}</div>
             </div>
             <div style="margin-top:6px">${existing}</div>
             <div class="row" style="margin-top:6px">
@@ -1175,24 +1435,22 @@
         }else if(ACTIVE_ROLE){
           const list=a.signups?.[ACTIVE_ROLE]||[];
           const isIn=list.includes(ME.id);
-          const full=list.length>=(a.capacity?.[ACTIVE_ROLE]||0);
+          const mode=priorityRoleType(a,ACTIVE_ROLE);
+          const full=!inRoleCapacity(a,ACTIVE_ROLE);
+          const pending=zzRequestFor(a,ME.id);
           actionHtml = isIn
             ? `<button class="btn danger" type="button" onclick="leaveEvent('${a.id}'); closeEventModal();">Odhlásit se</button>`
-            : (full
-                ? `<span class="muted">Kapacita pro roli ${roleLabel(ACTIVE_ROLE)} je plná</span>`
-                : `<button class="btn primary" type="button" onclick="joinEvent('${a.id}'); closeEventModal();">Přihlásit se (${roleLabel(ACTIVE_ROLE)})</button>`);
+            : (mode==='backup' ? (pending
+                ? `<span class="badge occ-requests">Čeká na schválení</span> <button class="btn danger" type="button" onclick="cancelZZBackup('${a.id}'); closeEventModal();">Stáhnout žádost</button>`
+                : `<button class="btn primary" type="button" onclick="requestZZBackup('${a.id}'); closeEventModal();">Požádat o účast – externista (${h(roleLabel(ACTIVE_ROLE))})</button>`)
+              : (full ? `<span class="muted">Kapacita pro roli ${h(roleLabel(ACTIVE_ROLE))} je plná</span>`
+                : `<button class="btn primary" type="button" onclick="joinEvent('${a.id}'); closeEventModal();">Přihlásit se (${h(roleLabel(ACTIVE_ROLE))})</button>`));
         }else{
           actionHtml = `<span class="muted">Nemáš vybranou veřejnou roli.</span>`;
         }
       }
 
-      const signupsHtml = pubs.map(r=>{
-        const names=(a.signups?.[r]||[]).map(uid=>h(getUserById(uid)?.name||uid)).join(', ');
-        const cur=(a.signups?.[r]||[]).length, cap=(a.capacity?.[r]||0);
-        const missing = cap>cur;
-        const color = missing ? 'style="color:#b91c1c;font-weight:600"' : 'class="muted"';
-        return `<div ${color}><b>${roleLabel(r)}</b> ${cur}/${cap} ${names?`— <span class="muted">${names}</span>`:''}</div>`;
-      }).join('');
+      const signupsHtml = occupancyDetailsHTML(a);
 
       const techBox = `
         <div class="pub-box small">
@@ -1253,6 +1511,7 @@
             <div class="muted small">Uloží se i do „Proběhlých“.</div>
           </div>
         </div>
+        ${pendingZZAdminHTML(a)}
         ${manualAssignBlock(a)}
       ` : '';
 
@@ -1358,11 +1617,12 @@
         const badgeKurz = (a.isCourse && isPrivileged()) ? ` <span class="badge">Kurz</span>` : '';
         const badgeUnconfirmed = a.isUnconfirmed ? ` <span class="badge unconfirmed">Nepotvrzená</span>` : '';
         const badgeCity = ` ${cityBadgeHTML(a)}`;
+        const badgePending=(ME && zzRequestFor(a,ME.id)) ? ' <span class="badge occ-requests">Externista – čeká na schválení</span>' : '';
         return `
           <div class="event-row ${mine?'mine-row':''}" onclick="openEventModal('${a.id}')">
             <div class="event-date">${fmtDM(a.date||'')}</div>
             <div>
-              <div class="event-title">${h(a.title||'Událost')}${badgeCity}${badgeKurz}${badgeUnconfirmed}</div>
+              <div class="event-title">${h(a.title||'Událost')}${badgeCity}${badgeKurz}${badgeUnconfirmed}${badgePending}</div>
               <div class="event-meta">${h(sub)}</div>
             </div>
             <div class="event-meta" style="text-align:right">${occupancyLineHTML(a)}</div>
@@ -1394,6 +1654,7 @@
 
       const upcoming = (ACTIONS||[]).filter(a=>isUserSignedInEvent(targetId, a) && canAccessEvent(a));
       const past = (ARCHIVE||[]).filter(a=>isUserSignedInEvent(targetId, a) && canAccessEvent(a));
+      const pending=(ACTIONS||[]).filter(a=>requestStatusForUser(a,targetId) && canAccessEvent(a));
 
       const userPicker = isPrivileged() ? `
         <div class="card" style="margin-bottom:12px">
@@ -1422,10 +1683,13 @@
             <div class="row">
               <span class="badge">Aktivní: ${upcoming.length}</span>
               <span class="badge">Proběhlé: ${past.length}</span>
+              <span class="badge occ-requests">Čekající: ${pending.length}</span>
             </div>
           </div>
         </div>
         ${buildMonthlyListHTML(upcoming, 'Přihlášené akce', { monthsDesc:false })}
+        <div style="height:12px"></div>
+        ${buildMonthlyListHTML(pending, 'Žádosti externistů ZZ', {monthsDesc:false})}
         <div style="height:12px"></div>
         ${buildMonthlyListHTML(past, 'Proběhlé akce', { monthsDesc:true })}
       `;
@@ -1639,6 +1903,7 @@
           <div class="card">
             <b>${h(r.label)}</b> <span class="muted">(${h(r.key)})</span> • ${r.isPublic?'veřejná':'neveřejná'}
             <div class="muted small" style="margin-top:5px">Viditelné oblasti: <b>${roleVisibleCities(r).map(cityLabel).join(' + ')||'žádná'}</b></div>
+            ${r.displayGroup ? `<div class="muted small">Společný název ve výpisu: <b>${h(r.displayGroup)}</b></div>` : ''}
             ${isPrivileged()?`
             <div class="row" style="margin-top:6px">
               ${canEdit   ? `<button class="btn" type="button" onclick="editRoleOpen('${r.key}')">Upravit</button>` : ``}
@@ -1654,6 +1919,10 @@
           <input id="newRoleLabel" class="input" placeholder="Popisek (Řidič)">
           <label class="row" style="gap:6px"><input type="checkbox" id="newRolePublic" checked> Veřejná role</label>
           ${roleCitiesControls('newRoleCity', EVENT_CITIES)}
+          <label style="display:block;margin-top:10px">Společný název ve výpisu událostí (nepovinné)
+            <input id="newRoleGroup" class="input" maxlength="55" placeholder="např. ZZ">
+          </label>
+          <div class="muted small" style="margin-top:4px">Role se stejným názvem zde budou ve výpisu v jedné kategorii. Detail události zobrazí obsazení každé zvlášť.</div>
           <div class="row" style="justify-content:flex-end;margin-top:8px">
             <button class="btn primary" type="button" onclick="addRole()">Přidat roli</button>
           </div>
@@ -1677,6 +1946,10 @@
           <label>Popisek<input class="input" id="er_label" value="${r.label}"></label>
           <label class="row" style="gap:6px"><input type="checkbox" id="er_pub" ${r.isPublic?'checked':''} ${r.key==='lektor'?'disabled':''}> Veřejná role</label>
           ${roleCitiesControls('editRoleCity', roleVisibleCities(r))}
+          <label style="display:block;margin-top:10px">Společný název ve výpisu událostí (nepovinné)
+            <input id="er_group" class="input" maxlength="55" value="${h(r.displayGroup||'')}" placeholder="např. ZZ">
+          </label>
+          <div class="muted small" style="margin-top:4px">U všech rolí, které mají být v jedné kategorii, zadej stejný text (např. ZZ). Společná kapacita a pravidla přihlašování interních/externích ZZ se nastavují až u konkrétní události.</div>
           ${r.key==='lektor'?'<div class="muted small">Lektor je interní oprávnění, proto se nesmí zobrazovat v požadavcích na dozor.</div>':''}
           <div class="row" style="justify-content:flex-end;margin-top:10px">
             <button class="btn" type="button" onclick="viewRoles()">Zpět</button>
@@ -1698,6 +1971,7 @@
       if(!cities.length){ alert('Vyber alespoň jednu oblast: Ústí nebo Praha.'); return; }
       const r=ROLES.find(x=>x.key===key); if(!r) return;
       r.label=label; r.isPublic=(key==='lektor') ? false : pub; r.visibleCities=cities;
+      r.displayGroup=(document.getElementById('er_group')?.value||'').trim();
       await kvSave(DB_ROLES, ROLES);
       toast('Role uložena', r.label);
       viewRoles();
@@ -1708,6 +1982,8 @@
         alert('Roli „admin“ může mazat pouze Podpora.');
         return;
       }
+      const used=[...ACTIONS,...ARCHIVE].some(a=>a.zzPriority?.enabled && (a.zzPriority.primaryRole===key || a.zzPriority.backupRole===key));
+      if(used) return alert('Role je použita v přednostním obsazení ZZ. Nejdřív uprav příslušné události.');
       if(!confirm('Smazat roli?')) return;
       ROLES=ROLES.filter(r=>r.key!==key);
       USERS=USERS.map(u=>({ ...u, roles:(u.roles||[]).filter(rk=>rk!==key) }));
@@ -1723,7 +1999,7 @@
       if(!cities.length) return alert('Vyber alespoň jednu oblast: Ústí nebo Praha.');
       if(k==='support' && !isSupportUser(ME)) return alert('Tuto roli může spravovat jen Podpora.');
       if(ROLES.find(r=>r.key===k)) return alert('Role s tímto klíčem už existuje');
-      ROLES.push({key:k,label:l,isPublic:pub,visibleCities:cities});
+      ROLES.push({key:k,label:l,isPublic:pub,visibleCities:cities,displayGroup:(document.getElementById('newRoleGroup')?.value||'').trim()});
       await kvSave(DB_ROLES, ROLES);
       viewRoles();
     }
@@ -2259,6 +2535,10 @@
       get(){ return SELECTED_LEKTOR_USER_ID; },
       set(v){ SELECTED_LEKTOR_USER_ID = v; }
     });
+    window.toggleZZPriorityEditor=toggleZZPriorityEditor;
+    window.requestZZBackup=requestZZBackup;
+    window.cancelZZBackup=cancelZZBackup;
+    window.decideZZBackup=decideZZBackup;
     window.joinEvent=joinEvent;
     window.leaveEvent=leaveEvent;
     window.assignMember=assignMember;
