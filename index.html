@@ -65,6 +65,13 @@
     .small{font-size:12px}
     .paid{background:#ecfdf5;border-color:#10b981;color:#065f46}
     .unconfirmed{background:#fff7ed;border-color:#fdba74;color:#9a3412;font-weight:700}
+    /* Oblasti Ústí / Praha: volič a označení událostí */
+    .city-switch{display:flex;gap:8px;flex-wrap:wrap;margin-top:7px}
+    .city-choice{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--border);border-radius:9px;padding:10px 16px;background:#fff;cursor:pointer;min-width:105px}
+    .city-choice:has(input:checked){background:#eff6ff;border-color:#2563eb;color:#1e40af;font-weight:700}
+    .city-choice input{accent-color:#2563eb;margin:0}
+    .city-tag{background:#f1f5f9;border-color:#cbd5e1;color:#334155;font-weight:600}
+    .city-tag-praha{background:#eff6ff;border-color:#93c5fd;color:#1d4ed8}
     .prewrap{white-space:pre-wrap; word-break:break-word}
     .table{width:100%; border-collapse:collapse}
     .table th,.table td{border:1px solid var(--border); padding:6px 8px; text-align:left}
@@ -364,6 +371,54 @@
     function canSeeLektorPanel(){ return ME && isLektorUser(ME); }
     function getPublicRoleKeys(){ return (ROLES||[]).filter(r=>r.isPublic && !['admin','support','lektor'].includes(r.key)).map(r=>r.key); }
     function roleLabel(k){ return (ROLES||[]).find(r=>r.key===k)?.label||k; }
+
+    /* ===== Oblasti: staré události jsou Ústí, staré role vidí obě ===== */
+    const EVENT_CITIES = ['usti', 'praha'];
+    function eventCities(a){
+      // Nové události mohou patřit do obou oblastí. Staré záznamy s "city"
+      // nebo bez údaje o oblasti zůstávají kompatibilní a beze změny v databázi.
+      if(Array.isArray(a?.cities)){
+        const selected=EVENT_CITIES.filter(city=>a.cities.includes(city));
+        if(selected.length) return selected;
+      }
+      return [a?.city==='praha' ? 'praha' : 'usti'];
+    }
+    function cityLabel(city){ return city === 'praha' ? 'Praha' : 'Ústí'; }
+    function cityBadgeHTML(a){
+      return eventCities(a).map(city=>
+        `<span class="badge city-tag ${city==='praha'?'city-tag-praha':''}">${cityLabel(city)}</span>`
+      ).join(' ');
+    }
+    function roleVisibleCities(r){
+      // Kompatibilita s rolemi uloženými před přidáním tohoto nastavení.
+      if(!Array.isArray(r?.visibleCities)) return EVENT_CITIES.slice();
+      return EVENT_CITIES.filter(c=>r.visibleCities.includes(c));
+    }
+    function roleAllowsCity(roleKey, cities){
+      const role = ROLES.find(r=>r.key===roleKey);
+      const requested = Array.isArray(cities) ? cities : [cities];
+      // Událost je viditelná, pokud se shoduje alespoň jedna oblast s rolí.
+      return !!role && roleVisibleCities(role).some(city=>requested.includes(city));
+    }
+    function canAccessEvent(a){
+      if(!ME || !a) return false;
+      if(isPrivileged()) return true; // Admin a Podpora vždy vidí obě oblasti.
+      if(a.isCourse) return false;
+      ensureActiveRole();
+      return !!ACTIVE_ROLE && roleAllowsCity(ACTIVE_ROLE, eventCities(a));
+    }
+    function selectedRoleCities(prefix){
+      return EVENT_CITIES.filter(city=>document.getElementById(`${prefix}_${city}`)?.checked);
+    }
+    function roleCitiesControls(prefix, cities){
+      return `<div class="admin-box" style="margin-top:10px">
+        <b>Viditelnost událostí podle oblasti</b>
+        <div class="row" style="margin-top:8px;gap:16px">
+          ${EVENT_CITIES.map(city=>`<label class="row" style="gap:6px"><input id="${prefix}_${city}" type="checkbox" ${cities.includes(city)?'checked':''}> ${cityLabel(city)}</label>`).join('')}
+        </div>
+        <div class="muted small" style="margin-top:6px">Role uvidí jen akce z vybraných oblastí. Admin a Podpora mají přístup k oběma bez ohledu na nastavení.</div>
+      </div>`;
+    }
     function getUserById(id){ return (USERS||[]).find(u=>u.id===id)||null; }
     function userPublicRoles(u){ const pubs=getPublicRoleKeys(); return (u?.roles||[]).filter(r=>pubs.includes(r)); }
     function ensureActiveRole(){ if(!ME){ACTIVE_ROLE=null;return;} const prs=userPublicRoles(ME); if(!prs.length){ACTIVE_ROLE=null;return;} if(!ACTIVE_ROLE||!prs.includes(ACTIVE_ROLE)) ACTIVE_ROLE=prs[0]; }
@@ -757,6 +812,8 @@
         timeTo: a.timeTo || '',
         title: (a.title || '') + ' (kopie)',
         location: a.location || '',
+        city: eventCities(a)[0],
+        cities: eventCities(a).slice(),
         signupUnlock: a.signupUnlock || '',
         capacity: JSON.parse(JSON.stringify(a.capacity || {})),
         tech: a.tech || '',
@@ -824,6 +881,7 @@
     function inRoleCapacity(a, roleKey){ const cap=(a.capacity?.[roleKey]||0); const list=a.signups?.[roleKey]||[]; return list.length<cap; }
     async function joinEvent(aid){
       const a=ACTIONS.find(x=>x.id===aid); if(!a||!ME) return;
+      if(!canAccessEvent(a)){ alert('Tato událost není dostupná pro právě vybranou roli.'); return; }
       const unlockMs=getUnlockMs(a); if(unlockMs!==0 && nowMs()<unlockMs){ alert('Přihlašování ještě není otevřené.'); return; }
       ensureActiveRole(); if(!ACTIVE_ROLE){ alert('Nemáte vybranou veřejnou roli'); return; }
       a.signups[ACTIVE_ROLE]=a.signups[ACTIVE_ROLE]||[];
@@ -863,6 +921,7 @@
       const date = pf ? (pf.date||today()) : (a?.date || today());
       const title = pf ? (pf.title||'') : (a?.title || '');
       const location = pf ? (pf.location||'') : (a?.location || '');
+      const cities = pf ? eventCities(pf) : eventCities(a);
       const tFrom = pf ? (pf.timeFrom||'') : (a?.timeFrom || '');
       const tTo = pf ? (pf.timeTo||'') : (a?.timeTo || '');
       const unlock = pf ? (pf.signupUnlock||'') : (a?.signupUnlock || '');
@@ -904,6 +963,15 @@
           <div class="grid2" style="margin-top:8px">
             <label>Název<input id="ev_title" class="input" value="${title}"></label>
             <label>Místo<input id="ev_loc" class="input" value="${location}"></label>
+          </div>
+
+          <div style="margin-top:12px">
+            <b>Oblast události</b>
+            <div class="city-switch" role="group" aria-label="Oblasti události">
+              <label class="city-choice"><input id="ev_city_usti" type="checkbox" ${cities.includes('usti')?'checked':''}> Ústí</label>
+              <label class="city-choice"><input id="ev_city_praha" type="checkbox" ${cities.includes('praha')?'checked':''}> Praha</label>
+            </div>
+            <div class="muted small" style="margin-top:5px">Můžeš vybrat jednu nebo obě oblasti. Nová událost má automaticky zaškrtnuté Ústí. Alespoň jedna oblast musí zůstat vybraná.</div>
           </div>
 
           <div class="grid2" style="margin-top:8px">
@@ -969,6 +1037,8 @@
       const t=$('#ev_to')?.value?.trim()||'';
       const ti=$('#ev_title')?.value?.trim()||'';
       const lo=$('#ev_loc')?.value?.trim()||'';
+      const cities=EVENT_CITIES.filter(city=>document.getElementById('ev_city_'+city)?.checked);
+      if(!cities.length){ alert('Vyber alespoň jednu oblast: Ústí nebo Praha.'); return; }
       const un=$('#ev_unlock')?.value?.trim()||'';
       const tech=$('#ev_tech')?.value?.trim()||'';
       const note=$('#ev_note')?.value?.trim()||'';
@@ -988,7 +1058,7 @@
 
       if(editId){
         await updateEventBoth(editId, ev=>{
-          ev.date=d; ev.timeFrom=f; ev.timeTo=t; ev.title=ti; ev.location=lo;
+          ev.date=d; ev.timeFrom=f; ev.timeTo=t; ev.title=ti; ev.location=lo; ev.city=cities[0]; ev.cities=cities.slice();
           ev.signupUnlock=unlock; ev.capacity=cap; ev.tech=tech; ev.notePublic=note;
           ev.isCourse = isCourse;
           ev.isUnconfirmed = isUnconfirmed;
@@ -1002,7 +1072,7 @@
       }else{
         const su={}; pubs.forEach(k=> su[k]=[] );
         const a={
-          id: uid(), date:d, timeFrom:f, timeTo:t, title:ti, location:lo,
+          id: uid(), date:d, timeFrom:f, timeTo:t, title:ti, location:lo, city:cities[0], cities:cities.slice(),
           signupUnlock:unlock, capacity:cap, signups:su,
           isPaid:false, adminNote:'', tech:tech, notePublic:note,
           isCourse: isCourse,
@@ -1082,6 +1152,10 @@
     function openEventModal(aid){
       const a = ACTIONS.find(x=>x.id===aid) || ARCHIVE.find(x=>x.id===aid);
       if(!a) return;
+      if(!canAccessEvent(a)){
+        toast('Událost není dostupná', 'Pro vybranou roli není tato oblast povolená.');
+        return;
+      }
 
       if(a.isCourse && !isPrivileged()){
         alert('Tuto položku mohou zobrazit pouze Admin a Podpora.');
@@ -1196,7 +1270,10 @@
           <button class="btn" type="button" onclick="downloadICS('${a.id}')">Stáhnout ICS</button>
         </div>`;
       const html = `
-        <div class="muted">${a.date} • ${a.location||'—'} • ${(a.timeFrom||'')}${a.timeTo?('–'+a.timeTo):''}</div>
+        <div class="row" style="gap:6px;align-items:center">
+          ${cityBadgeHTML(a)}
+          <span class="muted">${a.date} • ${h(a.location||'—')} • ${(a.timeFrom||'')}${a.timeTo?('–'+a.timeTo):''}</span>
+        </div>
         ${a.signupUnlock? `<div class="muted small">Odemknutí přihlašování: <b>${new Date(a.signupUnlock).toLocaleString()}</b></div>` : ''}
 
         <h4 style="margin:10px 0 6px 0">${h(a.title||'Událost')}${kurzBadge}${unconfirmedBadge}</h4>
@@ -1252,9 +1329,8 @@
     function buildMonthlyListHTML(source, title, opts = { monthsDesc:false }){
       let list = (source||[]).slice().filter(a=>a?.date);
 
-      if(!isPrivileged()){
-        list = list.filter(a => !a.isCourse);
-      }
+      // Filtruje události i archiv. U běžného člena rozhoduje právě aktivní role.
+      list = list.filter(a=>canAccessEvent(a));
 
       if(!list.length){
         return `<h3>${title}</h3><div class="card muted">Žádné záznamy.</div>`;
@@ -1281,11 +1357,12 @@
         const mine = isMeSignedInEvent(a);
         const badgeKurz = (a.isCourse && isPrivileged()) ? ` <span class="badge">Kurz</span>` : '';
         const badgeUnconfirmed = a.isUnconfirmed ? ` <span class="badge unconfirmed">Nepotvrzená</span>` : '';
+        const badgeCity = ` ${cityBadgeHTML(a)}`;
         return `
           <div class="event-row ${mine?'mine-row':''}" onclick="openEventModal('${a.id}')">
             <div class="event-date">${fmtDM(a.date||'')}</div>
             <div>
-              <div class="event-title">${h(a.title||'Událost')}${badgeKurz}${badgeUnconfirmed}</div>
+              <div class="event-title">${h(a.title||'Událost')}${badgeCity}${badgeKurz}${badgeUnconfirmed}</div>
               <div class="event-meta">${h(sub)}</div>
             </div>
             <div class="event-meta" style="text-align:right">${occupancyLineHTML(a)}</div>
@@ -1315,8 +1392,8 @@
       const targetId = target?.id || ME?.id;
       const targetName = target?.name || 'Uživatel';
 
-      const upcoming = (ACTIONS||[]).filter(a=>isUserSignedInEvent(targetId, a));
-      const past = (ARCHIVE||[]).filter(a=>isUserSignedInEvent(targetId, a));
+      const upcoming = (ACTIONS||[]).filter(a=>isUserSignedInEvent(targetId, a) && canAccessEvent(a));
+      const past = (ARCHIVE||[]).filter(a=>isUserSignedInEvent(targetId, a) && canAccessEvent(a));
 
       const userPicker = isPrivileged() ? `
         <div class="card" style="margin-bottom:12px">
@@ -1560,7 +1637,8 @@
 
         return `
           <div class="card">
-            <b>${r.label}</b> <span class="muted">(${r.key})</span> • ${r.isPublic?'veřejná':'neveřejná'}
+            <b>${h(r.label)}</b> <span class="muted">(${h(r.key)})</span> • ${r.isPublic?'veřejná':'neveřejná'}
+            <div class="muted small" style="margin-top:5px">Viditelné oblasti: <b>${roleVisibleCities(r).map(cityLabel).join(' + ')||'žádná'}</b></div>
             ${isPrivileged()?`
             <div class="row" style="margin-top:6px">
               ${canEdit   ? `<button class="btn" type="button" onclick="editRoleOpen('${r.key}')">Upravit</button>` : ``}
@@ -1575,6 +1653,7 @@
           <input id="newRoleKey" class="input" placeholder="klíč (např. ridic)">
           <input id="newRoleLabel" class="input" placeholder="Popisek (Řidič)">
           <label class="row" style="gap:6px"><input type="checkbox" id="newRolePublic" checked> Veřejná role</label>
+          ${roleCitiesControls('newRoleCity', EVENT_CITIES)}
           <div class="row" style="justify-content:flex-end;margin-top:8px">
             <button class="btn primary" type="button" onclick="addRole()">Přidat roli</button>
           </div>
@@ -1597,6 +1676,7 @@
           <label>Klíč<input class="input" id="er_key" value="${r.key}" disabled></label>
           <label>Popisek<input class="input" id="er_label" value="${r.label}"></label>
           <label class="row" style="gap:6px"><input type="checkbox" id="er_pub" ${r.isPublic?'checked':''} ${r.key==='lektor'?'disabled':''}> Veřejná role</label>
+          ${roleCitiesControls('editRoleCity', roleVisibleCities(r))}
           ${r.key==='lektor'?'<div class="muted small">Lektor je interní oprávnění, proto se nesmí zobrazovat v požadavcích na dozor.</div>':''}
           <div class="row" style="justify-content:flex-end;margin-top:10px">
             <button class="btn" type="button" onclick="viewRoles()">Zpět</button>
@@ -1614,8 +1694,10 @@
       }
       const label=document.getElementById('er_label').value.trim();
       const pub=document.getElementById('er_pub').checked;
+      const cities=selectedRoleCities('editRoleCity');
+      if(!cities.length){ alert('Vyber alespoň jednu oblast: Ústí nebo Praha.'); return; }
       const r=ROLES.find(x=>x.key===key); if(!r) return;
-      r.label=label; r.isPublic=(key==='lektor') ? false : pub;
+      r.label=label; r.isPublic=(key==='lektor') ? false : pub; r.visibleCities=cities;
       await kvSave(DB_ROLES, ROLES);
       toast('Role uložena', r.label);
       viewRoles();
@@ -1636,10 +1718,12 @@
       const k=$('#newRoleKey').value.trim();
       const l=$('#newRoleLabel').value.trim();
       const pub=$('#newRolePublic').checked;
+      const cities=selectedRoleCities('newRoleCity');
       if(!k||!l) return alert('Vyplň klíč i popisek');
+      if(!cities.length) return alert('Vyber alespoň jednu oblast: Ústí nebo Praha.');
       if(k==='support' && !isSupportUser(ME)) return alert('Tuto roli může spravovat jen Podpora.');
       if(ROLES.find(r=>r.key===k)) return alert('Role s tímto klíčem už existuje');
-      ROLES.push({key:k,label:l,isPublic:pub});
+      ROLES.push({key:k,label:l,isPublic:pub,visibleCities:cities});
       await kvSave(DB_ROLES, ROLES);
       viewRoles();
     }
@@ -2105,6 +2189,10 @@
 
       if(!a){
         toast('Událost nenalezena', 'Odkaz může být neplatný nebo byla událost smazána.');
+        return;
+      }
+      if(!canAccessEvent(a)){
+        toast('Událost není dostupná', 'Pro vybranou roli není tato oblast povolená.');
         return;
       }
 
