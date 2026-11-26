@@ -191,8 +191,8 @@
     window.supabase = supabase; // pro ladění v konzoli
 
     /* ===== Stav ===== */
-    const DB_USERS="users", DB_ACTIONS="actions", DB_ROLES="roles", DB_SESSION="session", DB_ACTIVITY="activity", DB_ARCHIVE="archive", DB_FORCED="forced", DB_SKILLS="skills", DB_SKILL_PROGRESS="skill_progress";
-    let USERS=[], ACTIONS=[], ROLES=[], ACTIVITY=[], ARCHIVE=[], FORCED=[], SKILLS=[], SKILL_PROGRESS=[];
+    const DB_USERS="users", DB_ACTIONS="actions", DB_ROLES="roles", DB_SESSION="session", DB_ACTIVITY="activity", DB_ARCHIVE="archive", DB_FORCED="forced", DB_SKILLS="skills", DB_SKILL_PROGRESS="skill_progress", DB_CHANGELOG="changelog";
+    let USERS=[], ACTIONS=[], ROLES=[], ACTIVITY=[], ARCHIVE=[], FORCED=[], SKILLS=[], SKILL_PROGRESS=[], CHANGELOG=[];
     let ME=null, ACTIVE_ROLE=null;
     let CURRENT_VIEW='events', CURRENT_EDIT_ID=null;
     let SELECTED_USER_ID=null, SELECTED_LEKTOR_USER_ID=null;
@@ -265,7 +265,7 @@
       supabase
         .channel('kv-realtime')
         .on('postgres_changes', { event:'*', schema:'public', table:'kv',
-          filter:"key=in.(users,roles,actions,archive,activity,forced,skills,skill_progress)" }, (payload)=>{
+          filter:"key=in.(users,roles,actions,archive,activity,forced,skills,skill_progress,changelog)" }, (payload)=>{
             const row=payload.new || payload.old;
             if(!row?.key) return;
             if(RESTORE_BUSY || CURRENT_VIEW==='create' || CURRENT_VIEW==='login') return;
@@ -279,6 +279,7 @@
               case DB_FORCED:FORCED=arr;break;
               case DB_SKILLS:SKILLS=arr;break;
               case DB_SKILL_PROGRESS:SKILL_PROGRESS=arr;break;
+              case DB_CHANGELOG:CHANGELOG=arr;break;
             }
             DB_ONLINE=true; DB_LAST_TS=Date.now(); DB_LAST_SRC='realtime';
             _lastRealtime=Date.now();
@@ -301,8 +302,8 @@
     async function refreshFromDB(){
       if(RESTORE_BUSY) return;
       try{
-        const [u,r,a,ar,ac,fo,sk,sp]=await Promise.all([
-          kvLoad(DB_USERS),kvLoad(DB_ROLES),kvLoad(DB_ACTIONS),kvLoad(DB_ARCHIVE),kvLoad(DB_ACTIVITY),kvLoad(DB_FORCED),kvLoad(DB_SKILLS),kvLoad(DB_SKILL_PROGRESS)
+        const [u,r,a,ar,ac,fo,sk,sp,cl]=await Promise.all([
+          kvLoad(DB_USERS),kvLoad(DB_ROLES),kvLoad(DB_ACTIONS),kvLoad(DB_ARCHIVE),kvLoad(DB_ACTIVITY),kvLoad(DB_FORCED),kvLoad(DB_SKILLS),kvLoad(DB_SKILL_PROGRESS),kvLoad(DB_CHANGELOG)
         ]);
         if(RESTORE_BUSY) return;
         let changed=false;
@@ -314,6 +315,7 @@
         if(!_eq(FORCED,fo)){FORCED=fo;changed=true;}
         if(!_eq(SKILLS,sk)){SKILLS=sk;changed=true;}
         if(!_eq(SKILL_PROGRESS,sp)){SKILL_PROGRESS=sp;changed=true;}
+        if(!_eq(CHANGELOG,cl)){CHANGELOG=cl;changed=true;}
         if(changed){ DB_ONLINE=true; DB_LAST_TS=Date.now(); DB_LAST_SRC='fallback'; renderApp(); checkForcedLogout(); }
       }catch(err){
         console.warn('fallback refresh error',err);
@@ -372,8 +374,8 @@
     }
     async function init(){
       try{
-        [USERS,ROLES,ACTIONS,ARCHIVE,ACTIVITY,FORCED,SKILLS,SKILL_PROGRESS]=await Promise.all([
-          kvLoad(DB_USERS),kvLoad(DB_ROLES),kvLoad(DB_ACTIONS),kvLoad(DB_ARCHIVE),kvLoad(DB_ACTIVITY),kvLoad(DB_FORCED),kvLoad(DB_SKILLS),kvLoad(DB_SKILL_PROGRESS)
+        [USERS,ROLES,ACTIONS,ARCHIVE,ACTIVITY,FORCED,SKILLS,SKILL_PROGRESS,CHANGELOG]=await Promise.all([
+          kvLoad(DB_USERS),kvLoad(DB_ROLES),kvLoad(DB_ACTIONS),kvLoad(DB_ARCHIVE),kvLoad(DB_ACTIVITY),kvLoad(DB_FORCED),kvLoad(DB_SKILLS),kvLoad(DB_SKILL_PROGRESS),kvLoad(DB_CHANGELOG)
         ]);
         DB_ONLINE=true; DB_LAST_TS=Date.now(); DB_LAST_SRC='init';
         await seedIfEmpty(); await ensureCoreRoles();
@@ -836,6 +838,7 @@
           <button class="btn" type="button" onclick="viewMyActions()">Moje akce</button>
           <button class="btn" type="button" onclick="viewPastEvents()">Proběhlé</button>
           <button class="btn" type="button" onclick="viewPassword()">Změna hesla</button>
+          <button class="btn" type="button" onclick="viewChangelog()">Changelog</button>
         </div>`;
 
       el.innerHTML=`
@@ -2428,11 +2431,11 @@
       [DB_USERS,'Členové a jejich přihlašovací údaje'], [DB_ROLES,'Role a jejich nastavení'],
       [DB_ACTIONS,'Aktuální události včetně přihlášených a externistů'], [DB_ARCHIVE,'Proběhlé události'],
       [DB_ACTIVITY,'Historie aktivity a loginů'], [DB_FORCED,'Vynucená odhlášení'],
-      [DB_SKILLS,'Lektorské dovednosti'], [DB_SKILL_PROGRESS,'Výsledky a pokrok členů']
+      [DB_SKILLS,'Lektorské dovednosti'], [DB_SKILL_PROGRESS,'Výsledky a pokrok členů'], [DB_CHANGELOG,'Changelog – historie změn']
     ];
     let RESTORE_FILE=null, RESTORE_NAME='', RESTORE_SELECTED=new Set(), RESTORE_BUSY=false, RESTORE_STATUS='';
     function canRestore(){ return DB_READY && isPrivileged() && isSupportUser(ME); }
-    function backupSnapshot(){ return {users:USERS,roles:ROLES,actions:ACTIONS,archive:ARCHIVE,activity:ACTIVITY,forced:FORCED,skills:SKILLS,skill_progress:SKILL_PROGRESS}; }
+    function backupSnapshot(){ return {users:USERS,roles:ROLES,actions:ACTIONS,archive:ARCHIVE,activity:ACTIVITY,forced:FORCED,skills:SKILLS,skill_progress:SKILL_PROGRESS,changelog:CHANGELOG}; }
     function downloadBackupObject(data,name){
       const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));
       const a=document.createElement('a'); a.href=url; a.download=name; document.body.appendChild(a); a.click(); a.remove();
@@ -2487,6 +2490,8 @@
             if(!id(r.userId)||!id(r.skillId)) throw new Error(label+': neplatný pokrok.'); identity=JSON.stringify([r.userId,r.skillId]);
           }else if(key===DB_FORCED){
             if(!id(r.uid)||!Number.isFinite(Number(r.ts))) throw new Error(label+': neplatné odhlášení.');
+          }else if(key===DB_CHANGELOG){
+            if(!id(r.id)||!str(r.title)||!str(r.text)||!/^\d{4}-\d{2}-\d{2}$/.test(r.date||'')) throw new Error(label+': neplatný záznam změny.'); identity=r.id;
           }else if(key===DB_ACTIVITY){
             if(!str(r.type)||!Number.isFinite(Number(r.ts))) throw new Error(label+': neplatný log.');
           }
@@ -2576,7 +2581,7 @@
         const final=await supabase.from('kv').select('key,data').in('key',BACKUP_SECTIONS.map(([k])=>k));
         if(final.error) throw final.error;
         const fresh={};for(const r of final.data||[]) fresh[r.key]=r.data;
-        [USERS,ROLES,ACTIONS,ARCHIVE,ACTIVITY,FORCED,SKILLS,SKILL_PROGRESS]=BACKUP_SECTIONS.map(([k])=>fresh[k]||[]);
+        [USERS,ROLES,ACTIONS,ARCHIVE,ACTIVITY,FORCED,SKILLS,SKILL_PROGRESS,CHANGELOG]=BACKUP_SECTIONS.map(([k])=>fresh[k]||[]);
         DB_ONLINE=true;DB_LAST_TS=Date.now();DB_LAST_SRC='restore';
         RESTORE_STATUS='Obnova dokončena a ověřena. Obnovené sekce: '+keys.join(', ');
         RESTORE_FILE=null;RESTORE_NAME='';RESTORE_SELECTED.clear();
@@ -2586,6 +2591,62 @@
         }else toast('Obnova dokončena');
       }catch(e){ RESTORE_STATUS=(committed?'Zápis proběhl, ale ověření selhalo. Neopakuj obnovu bez kontroly databáze: ':'Obnova nebyla potvrzena databází. Před dalším pokusem zkontroluj stav: ')+(e.message||String(e));alert(RESTORE_STATUS); }
       finally{ RESTORE_BUSY=false;$('#hdr').inert=false;if(CURRENT_VIEW==='export'&&canRestore()) viewExport(); }
+    }
+
+    /* ===== Changelog – veřejný pro přihlášené, správa Podporou ===== */
+    let CL_EDIT=null, CL_DRAFT=null, CL_BUSY=false;
+    function canEditChangelog(){
+      const current=ME && getUserById(ME.id);
+      return !!(DB_READY && current && current.isActive!==false && isSupportUser(current) && (userHasRole(current,'support')||userHasRole(current,'admin')));
+    }
+    function localDateCL(){ const d=new Date(); return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`; }
+    function viewChangelog(preserve=false){
+      if(!ME) return;
+      const same=CURRENT_VIEW==='changelog';
+      if(!same || !preserve){CL_EDIT=null; CL_DRAFT=null;}
+      CURRENT_VIEW='changelog';
+      const app=$('#app');
+      const editor=canEditChangelog();
+      const draft=CL_DRAFT||{date:localDateCL(),title:'',text:''};
+      const rows=CHANGELOG.slice().sort((a,b)=>String(b.date).localeCompare(String(a.date))||(b.createdAt||0)-(a.createdAt||0));
+      app.innerHTML=`<h3>Changelog</h3><div class="muted" style="margin-bottom:12px">Co je nového ve Směnáři? Přehled úprav a vylepšení systému.</div>
+        ${editor?`<div class="card" style="margin-bottom:16px"><h4 style="margin-top:0">${CL_EDIT?'Upravit změnu':'Přidat novou změnu'}</h4>
+        <form id="clForm"><div class="grid2"><label>Datum<input class="input" id="clDate" type="date" required value="${h(draft.date)}"></label><label>Nadpis<input class="input" id="clTitle" required maxlength="150" value="${h(draft.title)}" placeholder="Např. Nové možnosti přihlašování"></label></div>
+        <label style="display:block;margin-top:8px">Popis změn<textarea class="textarea" id="clText" required maxlength="20000" style="min-height:110px" placeholder="Co se přidalo nebo opravilo…">${h(draft.text)}</textarea></label>
+        <div class="row" style="justify-content:flex-end;margin-top:10px">${CL_EDIT?'<button class="btn" id="clCancel" type="button">Zrušit úpravu</button>':''}<button class="btn primary" type="submit" ${CL_BUSY?'disabled':''}>${CL_EDIT?'Uložit změnu':'Zveřejnit'}</button></div></form></div>`:''}
+        ${rows.map((r,i)=>`<div class="card" style="margin-bottom:10px"><div class="row" style="justify-content:space-between"><span class="muted small">${h(fmtDMy(r.date))}</span>${i===0?'<span class="badge">Nejnovější</span>':''}</div><h4 style="margin:8px 0">${h(r.title)}</h4><div class="prewrap">${h(r.text)}</div>${editor?`<div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn" data-cl-edit="${i}" ${CL_BUSY?'disabled':''}>Upravit</button><button class="btn danger" data-cl-delete="${i}" ${CL_BUSY?'disabled':''}>Smazat</button></div>`:''}</div>`).join('')||'<div class="card muted">Zatím nebyly zveřejněny žádné změny.</div>'}`;
+      if(editor){
+        const form=$('#clForm');
+        const capture=()=>CL_DRAFT={date:$('#clDate').value,title:$('#clTitle').value,text:$('#clText').value};
+        form.oninput=capture;
+        form.onsubmit=e=>{e.preventDefault();capture();saveChangelog();};
+        if($('#clCancel')) $('#clCancel').onclick=()=>{CL_EDIT=null;CL_DRAFT=null;viewChangelog(true);};
+        app.querySelectorAll('[data-cl-edit]').forEach(b=>b.onclick=()=>{if(CL_BUSY||!canEditChangelog())return;const r=rows[Number(b.dataset.clEdit)];CL_EDIT=r.id;CL_DRAFT={date:r.date,title:r.title,text:r.text};viewChangelog(true);});
+        app.querySelectorAll('[data-cl-delete]').forEach(b=>b.onclick=()=>deleteChangelog(rows[Number(b.dataset.clDelete)].id));
+      }
+      resetAutoLogoutTimer();
+    }
+    async function saveChangelog(){
+      if(!canEditChangelog()||CL_BUSY||!CL_DRAFT)return;
+      const d={date:CL_DRAFT.date,title:CL_DRAFT.title.trim(),text:CL_DRAFT.text.trim()};
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(d.date)||!d.title||!d.text)return alert('Vyplň datum, nadpis a popis změny.');
+      CL_BUSY=true;
+      try{
+        const fresh=await kvLoad(DB_CHANGELOG);
+        if(!canEditChangelog())throw new Error('Oprávnění se změnila.');
+        const editing=CL_EDIT;
+        if(editing&&!fresh.some(x=>x.id===editing))throw new Error('Záznam již neexistuje.');
+        const next=editing?fresh.map(x=>x.id===editing?{...x,...d,updatedAt:Date.now()}:x):[...fresh,{id:uid(),...d,createdAt:Date.now()}];
+        await kvSave(DB_CHANGELOG,next);CHANGELOG=next;CL_EDIT=null;CL_DRAFT=null;toast('Změna zveřejněna');
+      }catch(e){alert('Změnu se nepodařilo uložit: '+(e.message||e));}
+      finally{CL_BUSY=false;if(CURRENT_VIEW==='changelog')viewChangelog(true);}
+    }
+    async function deleteChangelog(id){
+      if(!canEditChangelog()||CL_BUSY||!confirm('Opravdu smazat tento záznam změny?'))return;
+      CL_BUSY=true;
+      try{const fresh=await kvLoad(DB_CHANGELOG);if(!canEditChangelog())throw new Error('Oprávnění se změnila.');const next=fresh.filter(x=>x.id!==id);await kvSave(DB_CHANGELOG,next);CHANGELOG=next;if(CL_EDIT===id){CL_EDIT=null;CL_DRAFT=null;}toast('Záznam smazán');}
+      catch(e){alert('Smazání se nezdařilo: '+(e.message||e));}
+      finally{CL_BUSY=false;if(CURRENT_VIEW==='changelog')viewChangelog(true);}
     }
 
     /* ===== Změna hesla ===== */
@@ -2703,6 +2764,7 @@
           case 'password': viewPassword(); break;
           case 'my-actions': viewMyActions(); break;
           case 'lektor': viewLektor(); break;
+          case 'changelog': viewChangelog(true); break;
           default: viewEvents();
         }
 
@@ -2725,6 +2787,7 @@
     window.viewRoles=viewRoles;
     window.viewActivity=viewActivity;
     window.viewExport=viewExport;
+    window.viewChangelog=viewChangelog;
     window.viewLogins=viewLogins;
     window.viewLektor=viewLektor;
     window.addSkill=addSkill;
