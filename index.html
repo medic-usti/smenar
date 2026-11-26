@@ -143,6 +143,14 @@
     .skill-row{display:grid;grid-template-columns:auto 1fr minmax(180px,260px);gap:10px;align-items:start;padding:10px 0;border-bottom:1px solid var(--border)}
     .skill-row:last-child{border-bottom:0}
     @media (max-width:640px){.skill-row{grid-template-columns:1fr}.skill-row input[type=checkbox]{width:22px;height:22px}}
+    /* Changelog: cílová skupina na začátku každého řádku */
+    .cl-change-list{list-style:none;padding:0;margin:0}
+    .cl-change-row{display:grid;grid-template-columns:76px minmax(0,1fr);gap:10px;align-items:start;padding:7px 0}
+    .cl-change-row+.cl-change-row{border-top:1px solid var(--border)}
+    .cl-audience{display:inline-flex;justify-content:center;align-items:center;border:1px solid;border-radius:6px;padding:3px 6px;font-size:12px;font-weight:700;line-height:1.3;white-space:nowrap}
+    .cl-audience-admin{background:#fff7ed;border-color:#fdba74;color:#9a3412}
+    .cl-audience-all{background:#ecfdf5;border-color:#86efac;color:#166534}
+    .cl-change-text{min-width:0;overflow-wrap:anywhere;line-height:1.5}
   </style>
 </head>
 <body>
@@ -2491,7 +2499,8 @@
           }else if(key===DB_FORCED){
             if(!id(r.uid)||!Number.isFinite(Number(r.ts))) throw new Error(label+': neplatné odhlášení.');
           }else if(key===DB_CHANGELOG){
-            if(!id(r.id)||!str(r.title)||!str(r.text)||!/^\d{4}-\d{2}-\d{2}$/.test(r.date||'')) throw new Error(label+': neplatný záznam změny.'); identity=r.id;
+            if(!id(r.id)||!str(r.title)||!(Array.isArray(r.changes)?typeof r.text==='string':str(r.text))||!/^\d{4}-\d{2}-\d{2}$/.test(r.date||'')) throw new Error(label+': neplatný záznam změny.'); identity=r.id;
+            if(r.changes!=null && (!Array.isArray(r.changes)||!r.changes.length||!r.changes.every(x=>obj(x)&&str(x.text)&&['all','admin'].includes(x.visibility)))) throw new Error(label+': neplatné položky změn.');
           }else if(key===DB_ACTIVITY){
             if(!str(r.type)||!Number.isFinite(Number(r.ts))) throw new Error(label+': neplatný log.');
           }
@@ -2600,6 +2609,12 @@
       return !!(DB_READY && current && current.isActive!==false && isSupportUser(current) && (userHasRole(current,'support')||userHasRole(current,'admin')));
     }
     function localDateCL(){ const d=new Date(); return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`; }
+    function clChanges(r){
+      return Array.isArray(r.changes) ? r.changes.map(x=>({text:String(x.text||''),visibility:x.visibility==='all'?'all':'admin'})) : [{text:String(r.text||''),visibility:'all'}];
+    }
+    function clVisible(r){
+      return clChanges(r).filter(x=>x.text.trim());
+    }
     function viewChangelog(preserve=false){
       if(!ME) return;
       const same=CURRENT_VIEW==='changelog';
@@ -2607,29 +2622,34 @@
       CURRENT_VIEW='changelog';
       const app=$('#app');
       const editor=canEditChangelog();
-      const draft=CL_DRAFT||{date:localDateCL(),title:'',text:''};
-      const rows=CHANGELOG.slice().sort((a,b)=>String(b.date).localeCompare(String(a.date))||(b.createdAt||0)-(a.createdAt||0));
+      const draft=CL_DRAFT||{date:localDateCL(),title:'',changes:[{text:'',visibility:'all'}]};
+      const rows=CHANGELOG.filter(r=>clVisible(r).length).sort((a,b)=>String(b.date).localeCompare(String(a.date))||(b.createdAt||0)-(a.createdAt||0));
       app.innerHTML=`<h3>Changelog</h3><div class="muted" style="margin-bottom:12px">Co je nového ve Směnáři? Přehled úprav a vylepšení systému.</div>
-        ${editor?`<div class="card" style="margin-bottom:16px"><h4 style="margin-top:0">${CL_EDIT?'Upravit změnu':'Přidat novou změnu'}</h4>
-        <form id="clForm"><div class="grid2"><label>Datum<input class="input" id="clDate" type="date" required value="${h(draft.date)}"></label><label>Nadpis<input class="input" id="clTitle" required maxlength="150" value="${h(draft.title)}" placeholder="Např. Nové možnosti přihlašování"></label></div>
-        <label style="display:block;margin-top:8px">Popis změn<textarea class="textarea" id="clText" required maxlength="20000" style="min-height:110px" placeholder="Co se přidalo nebo opravilo…">${h(draft.text)}</textarea></label>
-        <div class="row" style="justify-content:flex-end;margin-top:10px">${CL_EDIT?'<button class="btn" id="clCancel" type="button">Zrušit úpravu</button>':''}<button class="btn primary" type="submit" ${CL_BUSY?'disabled':''}>${CL_EDIT?'Uložit změnu':'Zveřejnit'}</button></div></form></div>`:''}
-        ${rows.map((r,i)=>`<div class="card" style="margin-bottom:10px"><div class="row" style="justify-content:space-between"><span class="muted small">${h(fmtDMy(r.date))}</span>${i===0?'<span class="badge">Nejnovější</span>':''}</div><h4 style="margin:8px 0">${h(r.title)}</h4><div class="prewrap">${h(r.text)}</div>${editor?`<div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn" data-cl-edit="${i}" ${CL_BUSY?'disabled':''}>Upravit</button><button class="btn danger" data-cl-delete="${i}" ${CL_BUSY?'disabled':''}>Smazat</button></div>`:''}</div>`).join('')||'<div class="card muted">Zatím nebyly zveřejněny žádné změny.</div>'}`;
+        ${editor?`<div class="card" style="margin-bottom:16px"><h4 style="margin-top:0">${CL_EDIT?'Upravit změny':'Přidat nové změny'}</h4>
+        <form id="clForm"><div class="grid2"><label>Datum<input class="input" id="clDate" type="date" required value="${h(draft.date)}"></label><label>Nadpis<input class="input" id="clTitle" required maxlength="150" value="${h(draft.title)}" placeholder="Např. Nová aktualizace"></label></div>
+        <div style="margin-top:12px"><b>Popis změn</b><div class="muted small">Každou změnu zadej zvlášť a označ, koho se týká. Všechny změny uvidí všichni přihlášení členové.</div></div>
+        <div id="clItems">${draft.changes.map((x,i)=>`<div class="admin-box" data-cl-item><div class="row" style="justify-content:space-between"><b>Změna ${i+1}</b><button class="btn danger" type="button" data-cl-remove="${i}" ${draft.changes.length===1||CL_BUSY?'disabled':''}>Odebrat</button></div><textarea class="textarea cl-item-text" required maxlength="20000" placeholder="Co se přidalo nebo opravilo…">${h(x.text)}</textarea><div class="row" style="margin-top:6px"><span class="small muted">Týká se:</span><label class="pill"><input type="radio" name="clVis${i}" value="all" ${x.visibility==='all'?'checked':''}> Všichni</label><label class="pill"><input type="radio" name="clVis${i}" value="admin" ${x.visibility==='admin'?'checked':''}> Admin</label></div></div>`).join('')}</div>
+        <button class="btn" id="clAdd" type="button" style="margin-top:10px" ${CL_BUSY?'disabled':''}>+ Přidat další změnu</button>
+        <div class="row" style="justify-content:flex-end;margin-top:10px">${CL_EDIT?'<button class="btn" id="clCancel" type="button">Zrušit úpravu</button>':''}<button class="btn primary" type="submit" ${CL_BUSY?'disabled':''}>${CL_EDIT?'Uložit změny':'Zveřejnit'}</button></div></form></div>`:''}
+        ${rows.map((r,i)=>`<div class="card" style="margin-bottom:10px"><div class="row" style="justify-content:space-between"><span class="muted small">${h(fmtDMy(r.date))}</span>${i===0?'<span class="badge">Nejnovější</span>':''}</div><h4 style="margin:8px 0">${h(r.title)}</h4><ul class="cl-change-list">${clVisible(r).map(x=>`<li class="cl-change-row"><span class="cl-audience ${x.visibility==='admin'?'cl-audience-admin':'cl-audience-all'}">${x.visibility==='admin'?'Admin':'Všichni'}</span><span class="prewrap cl-change-text">${h(x.text)}</span></li>`).join('')}</ul>${editor?`<div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn" data-cl-edit="${i}" ${CL_BUSY?'disabled':''}>Upravit</button><button class="btn danger" data-cl-delete="${i}" ${CL_BUSY?'disabled':''}>Smazat</button></div>`:''}</div>`).join('')||'<div class="card muted">Zatím nebyly zveřejněny žádné změny.</div>'}`;
       if(editor){
         const form=$('#clForm');
-        const capture=()=>CL_DRAFT={date:$('#clDate').value,title:$('#clTitle').value,text:$('#clText').value};
-        form.oninput=capture;
+        const capture=()=>CL_DRAFT={date:$('#clDate').value,title:$('#clTitle').value,changes:[...form.querySelectorAll('[data-cl-item]')].map(el=>({text:el.querySelector('.cl-item-text').value,visibility:el.querySelector('input:checked')?.value||'admin'}))};
+        form.oninput=capture; form.onchange=capture;
         form.onsubmit=e=>{e.preventDefault();capture();saveChangelog();};
+        $('#clAdd').onclick=()=>{capture();CL_DRAFT.changes.push({text:'',visibility:'all'});viewChangelog(true);$('#clItems').lastElementChild.querySelector('textarea').focus();};
+        form.querySelectorAll('[data-cl-remove]').forEach(b=>b.onclick=()=>{capture();if(CL_DRAFT.changes.length>1){CL_DRAFT.changes.splice(Number(b.dataset.clRemove),1);viewChangelog(true);}});
         if($('#clCancel')) $('#clCancel').onclick=()=>{CL_EDIT=null;CL_DRAFT=null;viewChangelog(true);};
-        app.querySelectorAll('[data-cl-edit]').forEach(b=>b.onclick=()=>{if(CL_BUSY||!canEditChangelog())return;const r=rows[Number(b.dataset.clEdit)];CL_EDIT=r.id;CL_DRAFT={date:r.date,title:r.title,text:r.text};viewChangelog(true);});
+        app.querySelectorAll('[data-cl-edit]').forEach(b=>b.onclick=()=>{if(CL_BUSY||!canEditChangelog())return;const r=rows[Number(b.dataset.clEdit)];CL_EDIT=r.id;CL_DRAFT={date:r.date,title:r.title,changes:clChanges(r)};viewChangelog(true);$('#clTitle').focus();});
         app.querySelectorAll('[data-cl-delete]').forEach(b=>b.onclick=()=>deleteChangelog(rows[Number(b.dataset.clDelete)].id));
       }
       resetAutoLogoutTimer();
     }
     async function saveChangelog(){
       if(!canEditChangelog()||CL_BUSY||!CL_DRAFT)return;
-      const d={date:CL_DRAFT.date,title:CL_DRAFT.title.trim(),text:CL_DRAFT.text.trim()};
-      if(!/^\d{4}-\d{2}-\d{2}$/.test(d.date)||!d.title||!d.text)return alert('Vyplň datum, nadpis a popis změny.');
+      const changes=CL_DRAFT.changes.map(x=>({text:x.text.trim(),visibility:x.visibility==='all'?'all':'admin'}));
+      const d={date:CL_DRAFT.date,title:CL_DRAFT.title.trim(),changes,text:changes.map(x=>x.text).join('\n')};
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(d.date)||!d.title||!changes.length||changes.some(x=>!x.text))return alert('Vyplň datum, nadpis a všechny položky změn.');
       CL_BUSY=true;
       try{
         const fresh=await kvLoad(DB_CHANGELOG);
@@ -2637,8 +2657,8 @@
         const editing=CL_EDIT;
         if(editing&&!fresh.some(x=>x.id===editing))throw new Error('Záznam již neexistuje.');
         const next=editing?fresh.map(x=>x.id===editing?{...x,...d,updatedAt:Date.now()}:x):[...fresh,{id:uid(),...d,createdAt:Date.now()}];
-        await kvSave(DB_CHANGELOG,next);CHANGELOG=next;CL_EDIT=null;CL_DRAFT=null;toast('Změna zveřejněna');
-      }catch(e){alert('Změnu se nepodařilo uložit: '+(e.message||e));}
+        await kvSave(DB_CHANGELOG,next);CHANGELOG=next;CL_EDIT=null;CL_DRAFT=null;toast('Změny zveřejněny');
+      }catch(e){alert('Změny se nepodařilo uložit: '+(e.message||e));}
       finally{CL_BUSY=false;if(CURRENT_VIEW==='changelog')viewChangelog(true);}
     }
     async function deleteChangelog(id){
