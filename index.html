@@ -268,7 +268,7 @@
           filter:"key=in.(users,roles,actions,archive,activity,forced,skills,skill_progress)" }, (payload)=>{
             const row=payload.new || payload.old;
             if(!row?.key) return;
-            if(CURRENT_VIEW==='create' || CURRENT_VIEW==='login') return;
+            if(RESTORE_BUSY || CURRENT_VIEW==='create' || CURRENT_VIEW==='login') return;
             const arr=row.data||[];
             switch(row.key){
               case DB_USERS:USERS=arr;break;
@@ -290,7 +290,7 @@
 
       setInterval(()=>{
         const FIVE_MIN=5*60*1000;
-        if(Date.now()-_lastRealtime>FIVE_MIN && CURRENT_VIEW!=='login' && CURRENT_VIEW!=='create'){
+        if(!RESTORE_BUSY && Date.now()-_lastRealtime>FIVE_MIN && CURRENT_VIEW!=='login' && CURRENT_VIEW!=='create'){
           refreshFromDB().catch(()=>{});
           _lastRealtime=Date.now();
         }
@@ -299,10 +299,12 @@
 
     const _eq=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
     async function refreshFromDB(){
+      if(RESTORE_BUSY) return;
       try{
         const [u,r,a,ar,ac,fo,sk,sp]=await Promise.all([
           kvLoad(DB_USERS),kvLoad(DB_ROLES),kvLoad(DB_ACTIONS),kvLoad(DB_ARCHIVE),kvLoad(DB_ACTIVITY),kvLoad(DB_FORCED),kvLoad(DB_SKILLS),kvLoad(DB_SKILL_PROGRESS)
         ]);
+        if(RESTORE_BUSY) return;
         let changed=false;
         if(!_eq(USERS,u)){USERS=u;changed=true;}
         if(!_eq(ROLES,r)){ROLES=r;changed=true;}
@@ -571,6 +573,7 @@
       return Math.max(...hits.map(f=>parseInt(f.ts||0,10)).filter(n=>!isNaN(n)));
     }
     function checkForcedLogout(){
+      if(RESTORE_BUSY) return;
       if(!ME) return;
       const ts = latestForcedFor(ME.id);
       if(ts>LAST_FORCED_TS){
@@ -588,7 +591,7 @@
     function isPastEvent(a){ return nowMs()>eventEndMs(a); }
     function getUnlockMs(a){ if(!a||!a.signupUnlock) return 0; const ms=new Date(a.signupUnlock).getTime(); return isNaN(ms)?0:ms; }
     function sortEvents(a,b){ const A=(a.date||'')+' '+(a.timeFrom||'00:00'); const B=(b.date||'')+' '+(b.timeFrom||'00:00'); return A.localeCompare(B); }
-    async function archiveSweep(){ const toMove=(ACTIONS||[]).filter(isPastEvent); if(!toMove.length) return; ACTIONS=ACTIONS.filter(a=>!isPastEvent(a)); await kvSave(DB_ACTIONS,ACTIONS); ARCHIVE=[...toMove.slice().sort(sortEvents).reverse(), ...ARCHIVE]; await kvSave(DB_ARCHIVE,ARCHIVE); }
+    async function archiveSweep(){ if(RESTORE_BUSY) return; const toMove=(ACTIONS||[]).filter(isPastEvent); if(!toMove.length) return; ACTIONS=ACTIONS.filter(a=>!isPastEvent(a)); await kvSave(DB_ACTIONS,ACTIONS); ARCHIVE=[...toMove.slice().sort(sortEvents).reverse(), ...ARCHIVE]; await kvSave(DB_ARCHIVE,ARCHIVE); }
 
     /* ===== Obsazenost (řádek) ===== */
     function occupancyLineHTML(a){
@@ -856,7 +859,7 @@
                 ` : ''}
 
                 <button type="button" onclick="viewCreateEvent()">Nová událost</button>
-                ${isSupportUser(ME)?`<button type="button" onclick="viewExport()">Export / Záloha</button>`:''}
+                ${isSupportUser(ME)?`<button type="button" onclick="viewExport()">Export / Záloha / Obnova</button>`:''}
               </div>
             </div>`:''}
           ${canSeeLektorPanel()? `<button class="btn lektor-btn" type="button" onclick="viewLektor()">Lektor</button>` : ''}
@@ -2420,14 +2423,169 @@
     }
     window.viewLogins=viewLogins;
 
-    function viewExport(){
-      if(!isSupportUser(ME)){ CURRENT_VIEW='events'; viewEvents(); return; }
-      CURRENT_VIEW='export';
-      $('#app').innerHTML=`<h3>Export / Záloha</h3><div class="card"><div class="row"><button class="btn" type="button" onclick="downloadJson()">Stáhnout JSON</button></div></div>`;
+    /* ===== Export a obnova zálohy (pouze Podpora) ===== */
+    const BACKUP_SECTIONS = [
+      [DB_USERS,'Členové a jejich přihlašovací údaje'], [DB_ROLES,'Role a jejich nastavení'],
+      [DB_ACTIONS,'Aktuální události včetně přihlášených a externistů'], [DB_ARCHIVE,'Proběhlé události'],
+      [DB_ACTIVITY,'Historie aktivity a loginů'], [DB_FORCED,'Vynucená odhlášení'],
+      [DB_SKILLS,'Lektorské dovednosti'], [DB_SKILL_PROGRESS,'Výsledky a pokrok členů']
+    ];
+    let RESTORE_FILE=null, RESTORE_NAME='', RESTORE_SELECTED=new Set(), RESTORE_BUSY=false, RESTORE_STATUS='';
+    function canRestore(){ return DB_READY && isPrivileged() && isSupportUser(ME); }
+    function backupSnapshot(){ return {users:USERS,roles:ROLES,actions:ACTIONS,archive:ARCHIVE,activity:ACTIVITY,forced:FORCED,skills:SKILLS,skill_progress:SKILL_PROGRESS}; }
+    function downloadBackupObject(data,name){
+      const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));
+      const a=document.createElement('a'); a.href=url; a.download=name; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(()=>URL.revokeObjectURL(url),2000);
     }
     function downloadJson(){
-      const data={users:USERS,roles:ROLES,actions:ACTIONS,archive:ARCHIVE,activity:ACTIVITY,forced:FORCED,skills:SKILLS,skill_progress:SKILL_PROGRESS};
-      const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='smenar_backup.json'; a.click();
+      if(!canRestore()) return;
+      downloadBackupObject(backupSnapshot(),'smenar_backup.json');
+    }
+    function parseRestoreBackup(raw){
+      let source=raw;
+      if(source && !Array.isArray(source) && Array.isArray(source.kv)) source=source.kv;
+      else if(source && !Array.isArray(source) && Array.isArray(source.data)) source=source.data;
+      if(Array.isArray(source)){
+        const obj=Object.create(null);
+        for(const row of source){
+          if(!row || typeof row.key!=='string') throw new Error('Neplatný formát řádků KV.');
+          if(!BACKUP_SECTIONS.some(([k])=>k===row.key)) continue;
+          if(Object.hasOwn(obj,row.key)) throw new Error('Duplicitní sekce: '+row.key);
+          obj[row.key]=typeof row.data==='string'?JSON.parse(row.data):row.data;
+        }
+        source=obj;
+      }
+      if(!source || typeof source!=='object') throw new Error('Záloha musí být JSON objekt nebo export tabulky kv.');
+      const out=Object.create(null);
+      const str=x=>typeof x==='string' && x.trim().length>0;
+      const id=x=>str(x) && /^[\p{L}\p{N}_.:@ -]+$/u.test(x);
+      const obj=x=>x!==null && typeof x==='object' && !Array.isArray(x);
+      for(const [key,label] of BACKUP_SECTIONS){
+        if(!Object.hasOwn(source,key)) continue;
+        const rows=source[key];
+        if(!Array.isArray(rows)) throw new Error(label+': očekávám seznam záznamů.');
+        const seen=new Set();
+        for(const r of rows){
+          if(!obj(r)) throw new Error(label+': neplatný záznam.');
+          let identity=null;
+          if(key===DB_USERS){
+            if(!id(r.id)||!str(r.name)||typeof r.password!=='string'||!Array.isArray(r.roles)||!r.roles.every(id)) throw new Error(label+': neplatný člen.');
+            identity=r.id;
+          }else if(key===DB_ROLES){
+            if(!id(r.key)||!str(r.label)||typeof r.isPublic!=='boolean') throw new Error(label+': neplatná role.');
+            identity=r.key;
+          }else if(key===DB_ACTIONS||key===DB_ARCHIVE){
+            if(!id(r.id)||!str(r.title)||!/^\d{4}-\d{2}-\d{2}$/.test(r.date||'')) throw new Error(label+': neplatná událost.');
+            if(r.signups!=null && (!obj(r.signups)||!Object.entries(r.signups).every(([k,v])=>id(k)&&Array.isArray(v)&&v.every(id)))) throw new Error(label+': neplatné přihlášky.');
+            if(r.courseMembers!=null && (!Array.isArray(r.courseMembers)||!r.courseMembers.every(id))) throw new Error(label+': neplatní členové kurzu.');
+            if(r.zzRequests!=null && (!Array.isArray(r.zzRequests)||!r.zzRequests.every(x=>obj(x)&&id(x.userId)&&id(x.roleKey)))) throw new Error(label+': neplatné žádosti externistů.');
+            identity=r.id;
+          }else if(key===DB_SKILLS){
+            if(!id(r.id)||!str(r.title)) throw new Error(label+': neplatná dovednost.'); identity=r.id;
+          }else if(key===DB_SKILL_PROGRESS){
+            if(!id(r.userId)||!id(r.skillId)) throw new Error(label+': neplatný pokrok.'); identity=JSON.stringify([r.userId,r.skillId]);
+          }else if(key===DB_FORCED){
+            if(!id(r.uid)||!Number.isFinite(Number(r.ts))) throw new Error(label+': neplatné odhlášení.');
+          }else if(key===DB_ACTIVITY){
+            if(!str(r.type)||!Number.isFinite(Number(r.ts))) throw new Error(label+': neplatný log.');
+          }
+          if(identity!==null){ if(seen.has(identity)) throw new Error(label+': duplicitní identifikátor '+identity); seen.add(identity); }
+        }
+        out[key]=rows;
+      }
+      if(!Object.keys(out).length) throw new Error('Soubor neobsahuje žádnou známou sekci Směnáře.');
+      return out;
+    }
+    async function readRestoreFile(file){
+      if(!canRestore()||RESTORE_BUSY||!file) return;
+      RESTORE_FILE=null; RESTORE_SELECTED.clear(); RESTORE_NAME=''; RESTORE_STATUS='';
+      try{
+        if(file.size>100*1024*1024) throw new Error('Soubor je větší než 100 MB.');
+        const raw=JSON.parse((await file.text()).replace(/^\uFEFF/,''));
+        if(!canRestore()||CURRENT_VIEW!=='export') return;
+        RESTORE_FILE=parseRestoreBackup(raw); RESTORE_NAME=file.name;
+      }catch(e){ RESTORE_STATUS='Chyba souboru: '+e.message; }
+      if(CURRENT_VIEW==='export') viewExport();
+    }
+    function viewExport(){
+      if(!canRestore()){ CURRENT_VIEW='events'; viewEvents(); return; }
+      CURRENT_VIEW='export';
+      const current=backupSnapshot();
+      const rows=BACKUP_SECTIONS.map(([k,label])=>{
+        const available=RESTORE_FILE && Object.hasOwn(RESTORE_FILE,k);
+        return `<label class="row" style="padding:9px 0;border-bottom:1px solid var(--border);justify-content:space-between"><span><input type="checkbox" data-restore-key="${k}" ${available?'':'disabled'} ${RESTORE_SELECTED.has(k)?'checked':''}> ${h(label)}</span><span class="small muted">Nyní: ${current[k].length} • Záloha: ${available?RESTORE_FILE[k].length:'—'}</span></label>`;
+      }).join('');
+      $('#app').innerHTML=`<h3>Export / Záloha / Obnova</h3>
+        <div class="card"><h4 style="margin-top:0">Export</h4><button class="btn" type="button" onclick="downloadJson()">Stáhnout JSON</button></div>
+        <div class="card" style="margin-top:12px"><h4 style="margin-top:0">Obnovit ze zálohy</h4>
+        <p class="muted small">Nahraj JSON zálohu Směnáře nebo JSON export tabulky kv ze Supabase. Pouze zvolené sekce budou přepsány. Ostatní zůstanou beze změny. Prázdná vybraná sekce smaže její obsah.</p>
+        <input class="input" id="restoreFile" type="file" accept=".json,application/json" ${RESTORE_BUSY?'disabled':''}>
+        ${RESTORE_NAME?`<p><b>${h(RESTORE_NAME)}</b></p>`:''}
+        ${RESTORE_FILE?`<div class="row" style="margin-top:12px"><button class="btn" id="restoreAll">Vybrat vše dostupné</button><button class="btn" id="restoreNone">Zrušit výběr</button></div><div>${rows}</div><div class="muted small" style="margin-top:8px">Role, členové a události spolu souvisejí. Při obnově akcí z půlnoci zvaž i archiv, aby nevznikly duplicity. Obnova členů může vrátit stará hesla.</div><div class="row" style="margin-top:14px"><button class="btn danger" id="restoreRun" ${RESTORE_BUSY||!RESTORE_SELECTED.size?'disabled':''}>${RESTORE_BUSY?'Obnovuji…':'Obnovit vybrané ('+RESTORE_SELECTED.size+')'}</button></div>`:''}
+        <div role="status" style="margin-top:10px;white-space:pre-wrap">${h(RESTORE_STATUS)}</div></div>`;
+      $('#restoreFile').onchange=e=>readRestoreFile(e.target.files[0]);
+      if(RESTORE_FILE){
+        for(const el of document.querySelectorAll('[data-restore-key]')){ if(RESTORE_BUSY) el.disabled=true; el.onchange=()=>{ if(el.checked) RESTORE_SELECTED.add(el.dataset.restoreKey); else RESTORE_SELECTED.delete(el.dataset.restoreKey); viewExport(); }; }
+        $('#restoreAll').disabled=RESTORE_BUSY; $('#restoreNone').disabled=RESTORE_BUSY;
+        $('#restoreAll').onclick=()=>{RESTORE_SELECTED=new Set(Object.keys(RESTORE_FILE));viewExport();};
+        $('#restoreNone').onclick=()=>{RESTORE_SELECTED.clear();viewExport();};
+        $('#restoreRun').onclick=restoreSelectedBackup;
+      }
+    }
+    async function restoreSelectedBackup(){
+      if(!canRestore()||RESTORE_BUSY||!RESTORE_FILE||!RESTORE_SELECTED.size) return;
+      const keys=BACKUP_SECTIONS.map(([k])=>k).filter(k=>RESTORE_SELECTED.has(k)&&Object.hasOwn(RESTORE_FILE,k));
+      const source=RESTORE_FILE;
+      RESTORE_BUSY=true; $('#hdr').inert=true; RESTORE_STATUS='Načítám aktuální stav databáze…'; viewExport();
+      let committed=false;
+      try{
+        const {data,error}=await supabase.from('kv').select('key,data').in('key',BACKUP_SECTIONS.map(([k])=>k));
+        if(error) throw error;
+        if(!canRestore()||CURRENT_VIEW!=='export') throw new Error('Relace nebo oprávnění se změnily.');
+        const before=Object.fromEntries(BACKUP_SECTIONS.map(([k])=>[k,[]]));
+        for(const row of data||[]){ if(!Array.isArray(row.data)) throw new Error('Aktuální databáze obsahuje neplatnou sekci '+row.key); before[row.key]=row.data; }
+        const after={...before}; for(const k of keys) after[k]=source[k];
+        if(keys.includes(DB_USERS)&&!after.users.some(u=>u.isActive!==false&&u.password&&u.roles.includes('support'))) throw new Error('Záloha členů musí obsahovat alespoň jeden aktivní účet s rolí Podpora.');
+        if(keys.includes(DB_ROLES)&&!['admin','support'].every(k=>after.roles.some(r=>r.key===k&&!r.isPublic))) throw new Error('Záloha rolí musí obsahovat neveřejné role Admin a Podpora.');
+        const ids=new Set(after.actions.map(a=>a.id));
+        if((keys.includes(DB_ACTIONS)||keys.includes(DB_ARCHIVE))&&after.archive.some(a=>ids.has(a.id))) throw new Error('Stejné ID události je v aktuálních i proběhlých akcích. Vyber společně akce i archiv z téže zálohy.');
+        const roleIds=new Set(after.roles.map(r=>r.key)), userIds=new Set(after.users.map(u=>u.id));
+        const missingRoles=new Set(),missingUsers=new Set();
+        for(const u of after.users) for(const k of u.roles||[]) if(!roleIds.has(k)) missingRoles.add(k);
+        for(const a of [...after.actions,...after.archive]){
+          for(const [k,us] of Object.entries(a.signups||{})){if(!roleIds.has(k)) missingRoles.add(k);for(const id of us||[]) if(!userIds.has(id)) missingUsers.add(id);}
+          for(const id of a.courseMembers||[]) if(!userIds.has(id)) missingUsers.add(id);
+          for(const req of a.zzRequests||[]){if(!userIds.has(req.userId)) missingUsers.add(req.userId);if(!roleIds.has(req.roleKey)) missingRoles.add(req.roleKey);}
+        }
+        const summary=keys.map(k=>`${BACKUP_SECTIONS.find(x=>x[0]===k)[1]}: ${before[k].length} → ${source[k].length}`).join('\n');
+        const warn=(missingRoles.size||missingUsers.size)?`\n\nPozor: výsledná data odkazují na ${missingRoles.size} chybějících rolí a ${missingUsers.size} chybějících členů. Zvaž společnou obnovu souvisejících sekcí.`:'';
+        if(!confirm('Opravdu přepsat následující sekce?\n\n'+summary+warn+'\n\nPřed zápisem se stáhne bezpečnostní kopie aktuální databáze.')){RESTORE_STATUS='Obnova zrušena. Data nezměněna.';return;}
+        if(!canRestore()) throw new Error('Oprávnění se změnila.');
+        downloadBackupObject(before,'smenar_pred_obnovou_'+new Date().toISOString().replace(/[:.]/g,'-')+'.json');
+        RESTORE_STATUS='Zapisuji vybrané sekce…';viewExport();
+        // Jeden SQL příkaz přes PostgREST: vybrané řádky se zapisují společně.
+        const stamp=new Date().toISOString();
+        const result=await supabase.from('kv').upsert(keys.map(key=>({key,data:source[key],updated_at:stamp})),{onConflict:'key'});
+        if(result.error) throw result.error;
+        committed=true;
+        const verify=await supabase.from('kv').select('key,data').in('key',keys);
+        if(verify.error) throw verify.error;
+        const canonical=x=>Array.isArray(x)?x.map(canonical):x&&typeof x==='object'?Object.fromEntries(Object.keys(x).sort().map(k=>[k,canonical(x[k])])):x;
+        if(keys.some(k=>JSON.stringify(canonical(verify.data.find(r=>r.key===k)?.data))!==JSON.stringify(canonical(source[k])))) throw new Error('Ověření zápisu nesouhlasí; možná souběžná změna.');
+        const final=await supabase.from('kv').select('key,data').in('key',BACKUP_SECTIONS.map(([k])=>k));
+        if(final.error) throw final.error;
+        const fresh={};for(const r of final.data||[]) fresh[r.key]=r.data;
+        [USERS,ROLES,ACTIONS,ARCHIVE,ACTIVITY,FORCED,SKILLS,SKILL_PROGRESS]=BACKUP_SECTIONS.map(([k])=>fresh[k]||[]);
+        DB_ONLINE=true;DB_LAST_TS=Date.now();DB_LAST_SRC='restore';
+        RESTORE_STATUS='Obnova dokončena a ověřena. Obnovené sekce: '+keys.join(', ');
+        RESTORE_FILE=null;RESTORE_NAME='';RESTORE_SELECTED.clear();
+        if(keys.includes(DB_USERS)){
+          alert('Obnova dokončena. Členové byli obnoveni, přihlas se znovu údaji ze zálohy.');
+          localStorage.removeItem(DB_SESSION);ME=null;ACTIVE_ROLE=null;SELECTED_USER_ID=null;CURRENT_VIEW='login';renderHeader();viewLogin();
+        }else toast('Obnova dokončena');
+      }catch(e){ RESTORE_STATUS=(committed?'Zápis proběhl, ale ověření selhalo. Neopakuj obnovu bez kontroly databáze: ':'Obnova nebyla potvrzena databází. Před dalším pokusem zkontroluj stav: ')+(e.message||String(e));alert(RESTORE_STATUS); }
+      finally{ RESTORE_BUSY=false;$('#hdr').inert=false;if(CURRENT_VIEW==='export'&&canRestore()) viewExport(); }
     }
 
     /* ===== Změna hesla ===== */
@@ -2518,6 +2676,7 @@
 
     /* ===== Router ===== */
     function renderApp(){
+      if(RESTORE_BUSY) return;
       try{
         if(!ME && DB_READY){
           const sid=localStorage.getItem(DB_SESSION);
